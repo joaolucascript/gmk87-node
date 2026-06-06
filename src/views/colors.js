@@ -80,15 +80,17 @@ const ColorsView = {
 
   _renderControls() {
     document.getElementById("panel-controls").innerHTML = `
-      <nav class="tab-strip" id="colors-tabs">
-        ${this._presets ? `<button type="button" class="tab-btn ${this._tab === "presets" ? "is-active" : ""}" data-tab="presets">Presets</button>` : ""}
-        <button type="button" class="tab-btn ${this._tab === "underglow" ? "is-active" : ""}" data-tab="underglow">Underglow</button>
-        <button type="button" class="tab-btn ${this._tab === "led" ? "is-active" : ""}" data-tab="led">LED bar</button>
-        <button type="button" class="tab-btn ${this._tab === "display" ? "is-active" : ""}" data-tab="display">LCD</button>
-      </nav>
-      <div class="tab-body" id="colors-tab-body">${this._renderTab()}</div>
-      <div class="panel-actions">
-        <button class="btn btn--solid btn--wide" id="colors-apply">Apply changes</button>
+      <div class="panel-page">
+        <nav class="tab-strip" id="colors-tabs">
+          <button type="button" class="tab-btn ${this._tab === "underglow" ? "is-active" : ""}" data-tab="underglow">Underglow</button>
+          ${this._presets ? `<button type="button" class="tab-btn ${this._tab === "presets" ? "is-active" : ""}" data-tab="presets">Presets</button>` : ""}
+          <button type="button" class="tab-btn ${this._tab === "led" ? "is-active" : ""}" data-tab="led">LED bar</button>
+          <button type="button" class="tab-btn ${this._tab === "display" ? "is-active" : ""}" data-tab="display">LCD</button>
+        </nav>
+        <div class="tab-body" id="colors-tab-body">${this._renderTab()}</div>
+        <div class="panel-actions">
+          <button class="btn btn--solid btn--wide" id="colors-apply">Apply changes</button>
+        </div>
       </div>`;
 
     document.querySelectorAll("#colors-tabs .tab-btn").forEach((btn) => {
@@ -168,7 +170,9 @@ const ColorsView = {
           ${HUE_SWATCHES.map((s, i) =>
             `<button type="button" class="swatch ${i === activeSwatch ? "is-active" : ""}" data-hue="${i}" style="background:${s.hex}" title="${s.name}"></button>`
           ).join("")}
-          <button type="button" class="swatch swatch--wheel ${isCustom ? "is-active" : ""}" data-hue="custom" title="Custom"></button>
+          <button type="button" class="swatch swatch--custom ${isCustom ? "is-active" : ""}" data-hue="custom" title="Custom color">
+            <span class="material-symbols-outlined">palette</span>
+          </button>
         </div>
         <div id="ug-hue-picker" class="${isCustom ? "" : "is-hidden"} ${ug.rainbow ? "is-dimmed" : ""}"></div>
       </div>`;
@@ -252,7 +256,7 @@ const ColorsView = {
           }
         });
       });
-      if (document.querySelector("#ug-hue-swatches .swatch--wheel.is-active")) {
+      if (document.querySelector("#ug-hue-swatches .swatch--custom.is-active")) {
         this._initColorPicker();
       }
     }

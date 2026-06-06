@@ -47,26 +47,18 @@ const HomeView = {
 
 
     controls.innerHTML = `
-
-      <div class="panel-head">
-
-        <h2>${this._esc(info.product || "GMK87")}</h2>
-
-        <button class="btn btn--ghost btn--sm" id="home-refresh">Refresh</button>
-
-      </div>
-
-      <dl class="spec-list">
-
-        <div><dt>Manufacturer</dt><dd>${this._esc(info.manufacturer || "—")}</dd></div>
-
-        <div><dt>Vendor ID</dt><dd>0x${(info.vendorId || 0).toString(16).padStart(4, "0")}</dd></div>
-
-        <div><dt>Product ID</dt><dd>0x${(info.productId || 0).toString(16).padStart(4, "0")}</dd></div>
-
-      </dl>
-
-      <div id="home-config"><div class="state-block state-block--compact"><div class="spinner"></div></div></div>`;
+      <div class="panel-page">
+        <div class="panel-head">
+          <h2>${this._esc(info.product || "GMK87")}</h2>
+          <button class="btn btn--ghost btn--sm" id="home-refresh">Refresh</button>
+        </div>
+        <dl class="spec-list">
+          <div><dt>Manufacturer</dt><dd>${this._esc(info.manufacturer || "—")}</dd></div>
+          <div><dt>Vendor ID</dt><dd>0x${(info.vendorId || 0).toString(16).padStart(4, "0")}</dd></div>
+          <div><dt>Product ID</dt><dd>0x${(info.productId || 0).toString(16).padStart(4, "0")}</dd></div>
+        </dl>
+        <div id="home-config"><div class="state-block state-block--compact"><div class="spinner"></div></div></div>
+      </div>`;
 
 
 

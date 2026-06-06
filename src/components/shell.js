@@ -18,6 +18,8 @@ const Shell = {
 
     { id: "upload", label: "Display", icon: "monitor" },
 
+    { id: "via", label: "Keymap", icon: "keyboard" },
+
     { id: "colors", label: "Lighting", icon: "tungsten" },
 
     { id: "timesync", label: "Clock", icon: "schedule" },
@@ -179,5 +181,36 @@ const Shell = {
 
   },
 
+};
+
+const ConnectionMonitor = {
+  _timer: null,
+  _checking: false,
+  POLL_MS: 3000,
+
+  start() {
+    if (this._timer) return;
+    this.refresh();
+    this._timer = setInterval(() => this.refresh(), this.POLL_MS);
+    window.addEventListener("focus", () => this.refresh());
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) this.refresh();
+    });
+    if (navigator.hid?.addEventListener) {
+      navigator.hid.addEventListener("connect", () => this.refresh());
+      navigator.hid.addEventListener("disconnect", () => this.refresh());
+    }
+  },
+
+  refresh() {
+    if (this._checking || !window.gmk87?.getInfo) return;
+    this._checking = true;
+    window.gmk87
+      .getInfo()
+      .then((result) => Shell.setConnected(Boolean(result.success)))
+      .finally(() => {
+        this._checking = false;
+      });
+  },
 };
 

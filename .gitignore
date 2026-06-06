@@ -7,6 +7,9 @@ src-tauri/gen/schemas/
 
 # Build output
 dist/
+.via-build/
+src/via/*
+!src/via/definitions/
 
 # Environment
 .env

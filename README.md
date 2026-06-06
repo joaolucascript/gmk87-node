@@ -112,6 +112,25 @@ Releases on GitHub also include the AppImage (built automatically on Linux in CI
 - Configure underglow and LED lighting
 - Apply built-in presets
 - Sync keyboard clock with system time
+- **VIA keymap editor** (wired + 2.4G) — remaps, layers, macros via [VIA](https://github.com/the-via/app)
+
+## VIA keymap (Keymap tab)
+
+GMK87 uses a separate USB interface for VIA/QMK (wired `0x5055`, 2.4G `0x5088`) from the display configurator (`0x5055` vendor protocol on interface 3).
+
+Bundled keyboard definitions live in `via-definitions/` (source) and `src/via/definitions/` (VIA bundle format).
+
+**One-time setup** (requires Node.js 18+ and Git):
+
+```bash
+npm run setup:via
+```
+
+This clones [the-via/app](https://github.com/the-via/app), embeds the GMK87 JSON definitions, builds the web app into `src/via/`, and ships it with the configurator. VIA is **GPL-3.0** — the bundled app stays separate under `src/via/`.
+
+Then open the **Keymap** tab, allow WebHID when prompted, and select your keyboard.
+
+> Use **wired USB** for the most reliable VIA connection. Display/Lighting tabs use a different HID interface and can stay open in other tabs after VIA connects.
 
 ## Protocol
 

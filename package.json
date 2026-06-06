@@ -8,7 +8,11 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "build:portable": "tauri build --no-bundle",
-    "build:appimage": "tauri build --bundles appimage"
+    "build:appimage": "tauri build --bundles appimage",
+    "build:via-defs": "node scripts/build-via-definitions.mjs",
+    "setup:via": "node scripts/setup-via.mjs",
+    "patch:via": "node scripts/patch-via-bundle.mjs",
+    "rebuild:via": "node scripts/apply-via-gmk87-patches.mjs && npm run build:via-defs && cd .via-build && npx vite build && cd .. && node scripts/copy-via-dist.mjs && node scripts/patch-via-bundle.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",

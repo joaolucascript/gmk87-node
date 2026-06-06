@@ -8,6 +8,7 @@ const App = {
   views: {
     home: HomeView,
     upload: UploadView,
+    via: ViaView,
     colors: ColorsView,
     timesync: TimeSyncView,
   },
@@ -16,6 +17,7 @@ const App = {
     if (this._started) return;
     this._started = true;
     Shell.init();
+    ConnectionMonitor.start();
     window.addEventListener("hashchange", () => this.route());
     this.route();
   },
@@ -34,6 +36,14 @@ const App = {
 
     this._currentView = view;
     Shell.setActiveRoute(hash);
+    ConnectionMonitor.refresh();
+
+    if (hash === "via") {
+      Shell.clearWorkspace();
+      view.render();
+      Shell.showWorkspace();
+      return;
+    }
     Shell.clearWorkspace();
     view.render();
     Shell.showWorkspace();
