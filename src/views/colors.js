@@ -1,35 +1,31 @@
-/**
- * Color Options view - Underglow, LED, Presets, Display
- */
-
 const EFFECT_OPTIONS = [
   "Off",
-  "Horizontal Dimming Wave",
-  "Horizontal Pulse Wave",
+  "Wave (soft)",
+  "Wave (pulse)",
   "Waterfall",
-  "Full Cycling Colors",
+  "Color cycle",
   "Breathing",
-  "Full One Color",
-  "Glow Pressed Key",
-  "Glow Spreading",
-  "Glow Row",
-  "Random Pattern",
-  "Rainbow Cycle",
-  "Rainbow Waterfall",
-  "Wave from Center",
-  "Circling JK",
-  "Raining",
-  "Wave Left-Right",
-  "Slow Saturation Cycle",
-  "Slow Rainbow from Center",
+  "Solid color",
+  "Glow on keypress",
+  "Ripple on keypress",
+  "Row on keypress",
+  "Random",
+  "Rainbow",
+  "Rainbow waterfall",
+  "Wave from center",
+  "Spiral",
+  "Rain drops",
+  "Wave (bounce)",
+  "Hue shift",
+  "Rainbow from center",
 ];
 
 const LED_MODE_OPTIONS = [
-  "Blinking One Color",
-  "Pulse Rainbow",
-  "Blinking One Color Alt",
-  "Fixed Color",
-  "Fixed Color Alt",
+  "Pulse",
+  "Rainbow pulse",
+  "Pulse (alt)",
+  "Solid",
+  "Solid (alt)",
 ];
 
 const COLOR_NAMES = [
@@ -51,351 +47,299 @@ const ColorsView = {
   _presets: null,
   _busy: false,
   _colorPicker: null,
-
-  // Current form state
+  _tab: "underglow",
   _ug: { effect: 0, brightness: 5, speed: 5, orientation: 1, rainbow: 0, hue: { red: 255, green: 255, blue: 255 } },
   _led: { mode: 3, color: 0, saturation: 5, rainbow: 0 },
   _display: 0,
 
   async render() {
     this._busy = false;
-    const content = document.getElementById("content");
-    content.innerHTML = `
-      <div class="page-header">
-        <h1 class="page-title">Color Options</h1>
-        <p class="page-subtitle">Configure underglow, LED, and display settings</p>
-      </div>
-      <div id="colors-body">
-        <div class="empty-state">
-          <div class="spinner" style="margin: 0 auto 16px;"></div>
-          <p class="empty-state-desc">Loading...</p>
-        </div>
-      </div>
-    `;
+    this._colorPicker = null;
+    document.getElementById("panel-controls").innerHTML = `
+      <div class="state-block"><div class="spinner"></div><p class="state-desc">Loading…</p></div>`;
 
-    // Load presets and current config in parallel
     const [presetsResult, configResult] = await Promise.all([
       window.gmk87.getPresets(),
       window.gmk87.readConfig(),
     ]);
 
-    if (presetsResult.success) {
-      this._presets = presetsResult.data;
-    }
+    if (presetsResult.success) this._presets = presetsResult.data;
 
     if (configResult.success) {
       const cfg = configResult.data;
       if (cfg.underglow) {
         this._ug = { ...this._ug, ...cfg.underglow };
-        if (cfg.underglow.hue) {
-          this._ug.hue = { ...this._ug.hue, ...cfg.underglow.hue };
-        }
+        if (cfg.underglow.hue) this._ug.hue = { ...this._ug.hue, ...cfg.underglow.hue };
       }
-      if (cfg.led) {
-        this._led = { ...this._led, ...cfg.led };
-      }
+      if (cfg.led) this._led = { ...this._led, ...cfg.led };
       this._display = cfg.showImage ?? 0;
     }
 
-    this._renderBody();
+    this._renderControls();
   },
 
-  _renderBody() {
-    const body = document.getElementById("colors-body");
-    if (!body) return;
-    this._colorPicker = null;
+  _renderControls() {
+    document.getElementById("panel-controls").innerHTML = `
+      <nav class="tab-strip" id="colors-tabs">
+        ${this._presets ? `<button type="button" class="tab-btn ${this._tab === "presets" ? "is-active" : ""}" data-tab="presets">Presets</button>` : ""}
+        <button type="button" class="tab-btn ${this._tab === "underglow" ? "is-active" : ""}" data-tab="underglow">Underglow</button>
+        <button type="button" class="tab-btn ${this._tab === "led" ? "is-active" : ""}" data-tab="led">LED bar</button>
+        <button type="button" class="tab-btn ${this._tab === "display" ? "is-active" : ""}" data-tab="display">LCD</button>
+      </nav>
+      <div class="tab-body" id="colors-tab-body">${this._renderTab()}</div>
+      <div class="panel-actions">
+        <button class="btn btn--solid btn--wide" id="colors-apply">Apply changes</button>
+      </div>`;
 
-    body.innerHTML = `
-      ${this._renderPresets()}
-      ${this._renderUnderglow()}
-      ${this._renderLed()}
-      ${this._renderDisplay()}
-      <button class="btn btn-primary" id="colors-apply">Apply Changes</button>
-    `;
+    document.querySelectorAll("#colors-tabs .tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this._tab = btn.dataset.tab;
+        this._colorPicker = null;
+        this._renderControls();
+      });
+    });
 
-    this._bind();
+    document.getElementById("colors-apply").addEventListener("click", () => this._apply());
+    this._bindTab();
   },
 
-  _renderPresets() {
-    if (!this._presets) return "";
-    const names = Object.keys(this._presets);
+  _renderTab() {
+    switch (this._tab) {
+      case "presets":
+        return this._tabPresets();
+      case "underglow":
+        return this._tabUnderglow();
+      case "led":
+        return this._tabLed();
+      case "display":
+        return this._tabDisplay();
+      default:
+        return "";
+    }
+  },
+
+  _tabPresets() {
+    if (!this._presets) return `<p class="muted">No presets</p>`;
     return `
-      <div class="card section-gap">
-        <div class="card-title">Presets</div>
-        <div class="pill-row">
-          ${names.map((name) => `<button class="pill" data-preset="${name}">${name}</button>`).join("")}
-        </div>
-      </div>
-    `;
+      <p class="panel-lead">Tap a preset to apply.</p>
+      <div class="chip-grid">
+        ${Object.keys(this._presets).map((name) =>
+          `<button type="button" class="chip" data-preset="${name}">${name}</button>`
+        ).join("")}
+      </div>`;
   },
 
-  _renderUnderglow() {
+  _tabUnderglow() {
     const ug = this._ug;
-    // Detect if current hue matches a preset swatch
-    const activeSwatchIndex = HUE_SWATCHES.findIndex(
+    const activeSwatch = HUE_SWATCHES.findIndex(
       (s) => s.rgb.red === ug.hue.red && s.rgb.green === ug.hue.green && s.rgb.blue === ug.hue.blue
     );
-    const isCustom = activeSwatchIndex === -1;
+    const isCustom = activeSwatch === -1;
     return `
-      <div class="card section-gap">
-        <div class="card-title">Underglow</div>
-        <div class="form-group">
-          <label class="form-label">Effect</label>
-          <select id="ug-effect">
-            ${EFFECT_OPTIONS.map((name, i) => `<option value="${i}" ${i === ug.effect ? "selected" : ""}>${name}</option>`).join("")}
-          </select>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label">Brightness</label>
-            <div class="range-wrapper">
-              <input type="range" id="ug-brightness" min="0" max="9" value="${ug.brightness}">
-              <span class="range-value" id="ug-brightness-val">${ug.brightness}</span>
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Speed</label>
-            <div class="range-wrapper">
-              <input type="range" id="ug-speed" min="0" max="9" value="${ug.speed}">
-              <span class="range-value" id="ug-speed-val">${ug.speed}</span>
-            </div>
+      <div class="field">
+        <label class="field-label">Effect</label>
+        <select id="ug-effect">${EFFECT_OPTIONS.map((n, i) =>
+          `<option value="${i}" ${i === ug.effect ? "selected" : ""}>${n}</option>`
+        ).join("")}</select>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label class="field-label">Brightness</label>
+          <div class="range-row">
+            <input type="range" id="ug-brightness" min="0" max="9" value="${ug.brightness}">
+            <output id="ug-brightness-val">${ug.brightness}</output>
           </div>
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <div class="switch-row">
-              <span class="form-label" style="margin-bottom:0">Orientation</span>
-              <label class="switch">
-                <input type="checkbox" id="ug-orientation" ${ug.orientation ? "checked" : ""}>
-                <span class="switch-track"></span>
-              </label>
-            </div>
+        <div class="field">
+          <label class="field-label">Speed</label>
+          <div class="range-row">
+            <input type="range" id="ug-speed" min="0" max="9" value="${ug.speed}">
+            <output id="ug-speed-val">${ug.speed}</output>
           </div>
-          <div class="form-group">
-            <div class="switch-row">
-              <span class="form-label" style="margin-bottom:0">Rainbow</span>
-              <label class="switch">
-                <input type="checkbox" id="ug-rainbow" ${ug.rainbow ? "checked" : ""}>
-                <span class="switch-track"></span>
-              </label>
-            </div>
-          </div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Hue Color</label>
-          <div class="color-swatches" id="ug-hue-swatches">
-            ${HUE_SWATCHES.map((s, i) => `<button class="hue-swatch ${i === activeSwatchIndex ? "active" : ""}" data-hue="${i}" title="${s.name}" style="background:${s.hex}"></button>`).join("")}
-            <button class="hue-swatch custom ${isCustom ? "active" : ""}" data-hue="custom" title="Custom"></button>
-          </div>
-          <div id="ug-hue-picker" class="${isCustom ? "" : "hidden"} ${ug.rainbow ? "dimmed" : ""}"></div>
         </div>
       </div>
-    `;
+      <div class="field-row field-row--toggles">
+        <label class="toggle-field"><span>Reverse direction</span><input type="checkbox" id="ug-orientation" ${ug.orientation ? "checked" : ""}><i></i></label>
+        <label class="toggle-field"><span>Rainbow mode</span><input type="checkbox" id="ug-rainbow" ${ug.rainbow ? "checked" : ""}><i></i></label>
+      </div>
+      <div class="field">
+        <label class="field-label">Color</label>
+        <div class="swatch-row" id="ug-hue-swatches">
+          ${HUE_SWATCHES.map((s, i) =>
+            `<button type="button" class="swatch ${i === activeSwatch ? "is-active" : ""}" data-hue="${i}" style="background:${s.hex}" title="${s.name}"></button>`
+          ).join("")}
+          <button type="button" class="swatch swatch--wheel ${isCustom ? "is-active" : ""}" data-hue="custom" title="Custom"></button>
+        </div>
+        <div id="ug-hue-picker" class="${isCustom ? "" : "is-hidden"} ${ug.rainbow ? "is-dimmed" : ""}"></div>
+      </div>`;
   },
 
-  _renderLed() {
+  _tabLed() {
     const led = this._led;
     return `
-      <div class="card section-gap">
-        <div class="card-title">LED</div>
-        <div class="form-group">
-          <label class="form-label">Mode</label>
-          <select id="led-mode">
-            ${LED_MODE_OPTIONS.map((name, i) => `<option value="${i}" ${i === led.mode ? "selected" : ""}>${name}</option>`).join("")}
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Color</label>
-          <div class="color-swatches">
-            ${COLOR_NAMES.map((name, i) => `<button class="color-swatch ${i === led.color ? "active" : ""}" data-color="${i}" title="${name}"></button>`).join("")}
-          </div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Saturation</label>
-          <div class="range-wrapper">
-            <input type="range" id="led-saturation" min="0" max="9" value="${led.saturation}">
-            <span class="range-value" id="led-saturation-val">${led.saturation}</span>
-          </div>
-        </div>
-        <div class="form-group">
-          <div class="switch-row">
-            <span class="form-label" style="margin-bottom:0">Rainbow</span>
-            <label class="switch">
-              <input type="checkbox" id="led-rainbow" ${led.rainbow ? "checked" : ""}>
-              <span class="switch-track"></span>
-            </label>
-          </div>
+      <div class="field">
+        <label class="field-label">Mode</label>
+        <select id="led-mode">${LED_MODE_OPTIONS.map((n, i) =>
+          `<option value="${i}" ${i === led.mode ? "selected" : ""}>${n}</option>`
+        ).join("")}</select>
+      </div>
+      <div class="field">
+        <label class="field-label">Color</label>
+        <div class="swatch-row">
+          ${COLOR_NAMES.map((name, i) =>
+            `<button type="button" class="swatch swatch--led ${i === led.color ? "is-active" : ""}" data-color="${i}" data-led-color title="${name}"></button>`
+          ).join("")}
         </div>
       </div>
-    `;
+      <div class="field">
+        <label class="field-label">Saturation</label>
+        <div class="range-row">
+          <input type="range" id="led-saturation" min="0" max="9" value="${led.saturation}">
+          <output id="led-saturation-val">${led.saturation}</output>
+        </div>
+      </div>
+      <label class="toggle-field"><span>Rainbow mode</span><input type="checkbox" id="led-rainbow" ${led.rainbow ? "checked" : ""}><i></i></label>`;
   },
 
-  _renderDisplay() {
+  _tabDisplay() {
     return `
-      <div class="card section-gap">
-        <div class="card-title">Display Slot</div>
-        <div class="toggle-group">
-          <button class="toggle-btn ${this._display === 0 ? "active" : ""}" data-display="0">Clock</button>
-          <button class="toggle-btn ${this._display === 1 ? "active" : ""}" data-display="1">Slot 0</button>
-          <button class="toggle-btn ${this._display === 2 ? "active" : ""}" data-display="2">Slot 1</button>
-        </div>
-      </div>
-    `;
+      <p class="panel-lead">What the LCD shows.</p>
+      <div class="segmented" id="display-segment">
+        <button type="button" class="${this._display === 0 ? "is-active" : ""}" data-display="0">Clock</button>
+        <button type="button" class="${this._display === 1 ? "is-active" : ""}" data-display="1">Slot 0</button>
+        <button type="button" class="${this._display === 2 ? "is-active" : ""}" data-display="2">Slot 1</button>
+      </div>`;
   },
 
-  _bind() {
-    // Presets
-    document.querySelectorAll("[data-preset]").forEach((btn) => {
-      btn.addEventListener("click", () => this._applyPreset(btn.dataset.preset));
-    });
-
-    // Underglow
-    const ugEffect = document.getElementById("ug-effect");
-    const ugBrightness = document.getElementById("ug-brightness");
-    const ugSpeed = document.getElementById("ug-speed");
-    const ugOrientation = document.getElementById("ug-orientation");
-    const ugRainbow = document.getElementById("ug-rainbow");
-    const ugHueContainer = document.getElementById("ug-hue-picker");
-
-    ugEffect.addEventListener("change", () => { this._ug.effect = parseInt(ugEffect.value); });
-    ugBrightness.addEventListener("input", () => {
-      this._ug.brightness = parseInt(ugBrightness.value);
-      document.getElementById("ug-brightness-val").textContent = ugBrightness.value;
-    });
-    ugSpeed.addEventListener("input", () => {
-      this._ug.speed = parseInt(ugSpeed.value);
-      document.getElementById("ug-speed-val").textContent = ugSpeed.value;
-    });
-    ugOrientation.addEventListener("change", () => { this._ug.orientation = ugOrientation.checked ? 1 : 0; });
-    ugRainbow.addEventListener("change", () => {
-      this._ug.rainbow = ugRainbow.checked ? 1 : 0;
-      ugHueContainer.classList.toggle("dimmed", ugRainbow.checked);
-    });
-
-    // Hue swatches
-    document.querySelectorAll("#ug-hue-swatches .hue-swatch").forEach((swatch) => {
-      swatch.addEventListener("click", () => {
-        document.querySelectorAll("#ug-hue-swatches .hue-swatch").forEach((s) => s.classList.remove("active"));
-        swatch.classList.add("active");
-
-        if (swatch.dataset.hue === "custom") {
-          ugHueContainer.classList.remove("hidden");
-          this._initColorPicker();
-        } else {
-          ugHueContainer.classList.add("hidden");
-          const idx = parseInt(swatch.dataset.hue);
-          this._ug.hue = { ...HUE_SWATCHES[idx].rgb };
-        }
+  _bindTab() {
+    if (this._tab === "presets") {
+      document.querySelectorAll("[data-preset]").forEach((btn) => {
+        btn.addEventListener("click", () => this._applyPreset(btn.dataset.preset));
       });
-    });
-
-    // Initialize color picker if Custom is already active
-    if (document.querySelector('#ug-hue-swatches .hue-swatch.custom.active')) {
-      this._initColorPicker();
+      return;
     }
 
-    // LED
-    const ledMode = document.getElementById("led-mode");
-    const ledSaturation = document.getElementById("led-saturation");
-    const ledRainbow = document.getElementById("led-rainbow");
-
-    ledMode.addEventListener("change", () => { this._led.mode = parseInt(ledMode.value); });
-    ledSaturation.addEventListener("input", () => {
-      this._led.saturation = parseInt(ledSaturation.value);
-      document.getElementById("led-saturation-val").textContent = ledSaturation.value;
-    });
-    ledRainbow.addEventListener("change", () => { this._led.rainbow = ledRainbow.checked ? 1 : 0; });
-
-    document.querySelectorAll(".color-swatch").forEach((swatch) => {
-      swatch.addEventListener("click", () => {
-        document.querySelectorAll(".color-swatch").forEach((s) => s.classList.remove("active"));
-        swatch.classList.add("active");
-        this._led.color = parseInt(swatch.dataset.color);
+    if (this._tab === "underglow") {
+      document.getElementById("ug-effect").addEventListener("change", (e) => {
+        this._ug.effect = parseInt(e.target.value);
       });
-    });
-
-    // Display
-    document.querySelectorAll("[data-display]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll("[data-display]").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        this._display = parseInt(btn.dataset.display);
+      document.getElementById("ug-brightness").addEventListener("input", (e) => {
+        this._ug.brightness = parseInt(e.target.value);
+        document.getElementById("ug-brightness-val").textContent = e.target.value;
       });
-    });
+      document.getElementById("ug-speed").addEventListener("input", (e) => {
+        this._ug.speed = parseInt(e.target.value);
+        document.getElementById("ug-speed-val").textContent = e.target.value;
+      });
+      document.getElementById("ug-orientation").addEventListener("change", (e) => {
+        this._ug.orientation = e.target.checked ? 1 : 0;
+      });
+      const picker = document.getElementById("ug-hue-picker");
+      document.getElementById("ug-rainbow").addEventListener("change", (e) => {
+        this._ug.rainbow = e.target.checked ? 1 : 0;
+        picker.classList.toggle("is-dimmed", e.target.checked);
+      });
+      document.querySelectorAll("#ug-hue-swatches .swatch").forEach((sw) => {
+        sw.addEventListener("click", () => {
+          document.querySelectorAll("#ug-hue-swatches .swatch").forEach((s) => s.classList.remove("is-active"));
+          sw.classList.add("is-active");
+          if (sw.dataset.hue === "custom") {
+            picker.classList.remove("is-hidden");
+            this._initColorPicker();
+          } else {
+            picker.classList.add("is-hidden");
+            this._ug.hue = { ...HUE_SWATCHES[parseInt(sw.dataset.hue)].rgb };
+          }
+        });
+      });
+      if (document.querySelector("#ug-hue-swatches .swatch--wheel.is-active")) {
+        this._initColorPicker();
+      }
+    }
 
-    // Apply
-    document.getElementById("colors-apply").addEventListener("click", () => this._apply());
+    if (this._tab === "led") {
+      document.getElementById("led-mode").addEventListener("change", (e) => {
+        this._led.mode = parseInt(e.target.value);
+      });
+      document.getElementById("led-saturation").addEventListener("input", (e) => {
+        this._led.saturation = parseInt(e.target.value);
+        document.getElementById("led-saturation-val").textContent = e.target.value;
+      });
+      document.getElementById("led-rainbow").addEventListener("change", (e) => {
+        this._led.rainbow = e.target.checked ? 1 : 0;
+      });
+      document.querySelectorAll("[data-led-color]").forEach((sw) => {
+        sw.addEventListener("click", () => {
+          document.querySelectorAll("[data-led-color]").forEach((s) => s.classList.remove("is-active"));
+          sw.classList.add("is-active");
+          this._led.color = parseInt(sw.dataset.color);
+        });
+      });
+    }
+
+    if (this._tab === "display") {
+      document.querySelectorAll("#display-segment button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll("#display-segment button").forEach((b) => b.classList.remove("is-active"));
+          btn.classList.add("is-active");
+          this._display = parseInt(btn.dataset.display);
+        });
+      });
+    }
   },
 
   async _applyPreset(name) {
     if (this._busy) return;
-
-    const confirmed = await this._showConfirmModal(name);
-    if (!confirmed) return;
+    const ok = await this._confirm(`Apply preset "${name}"? This overwrites current settings.`);
+    if (!ok) return;
 
     this._busy = true;
-    this._setAllDisabled(true);
-
     const result = await window.gmk87.applyPreset(name);
     this._busy = false;
-    this._setAllDisabled(false);
 
     if (result.success) {
       Toast.success(`Preset "${name}" applied`);
-      // Reload config to reflect changes
-      const cfgResult = await window.gmk87.readConfig();
-      if (cfgResult.success) {
-        const cfg = cfgResult.data;
-        if (cfg.underglow) {
-          this._ug = { ...this._ug, ...cfg.underglow };
-          if (cfg.underglow.hue) this._ug.hue = { ...this._ug.hue, ...cfg.underglow.hue };
+      const cfg = await window.gmk87.readConfig();
+      if (cfg.success) {
+        const c = cfg.data;
+        if (c.underglow) {
+          this._ug = { ...this._ug, ...c.underglow };
+          if (c.underglow.hue) this._ug.hue = { ...this._ug.hue, ...c.underglow.hue };
         }
-        if (cfg.led) this._led = { ...this._led, ...cfg.led };
-        this._display = cfg.showImage ?? 0;
-        this._renderBody();
+        if (c.led) this._led = { ...this._led, ...c.led };
+        this._display = c.showImage ?? 0;
+        this._renderControls();
       }
     } else {
-      Toast.error(result.error || "Failed to apply preset");
+      Toast.error(result.error || "Preset failed");
     }
   },
 
-  _showConfirmModal(presetName) {
+  _confirm(text) {
     return new Promise((resolve) => {
       const overlay = document.createElement("div");
-      overlay.className = "modal-overlay";
+      overlay.className = "overlay";
       overlay.innerHTML = `
-        <div class="modal">
-          <div class="modal-title">Apply Preset</div>
-          <div class="modal-text">This will overwrite your current settings with the "${presetName}" preset. Continue?</div>
-          <div class="modal-actions">
-            <button class="btn" id="modal-cancel">Cancel</button>
-            <button class="btn btn-primary" id="modal-apply">Apply</button>
+        <div class="dialog">
+          <h2 class="dialog-title">Confirm</h2>
+          <p class="dialog-text">${text}</p>
+          <div class="dialog-actions">
+            <button class="btn btn--ghost" data-no>Cancel</button>
+            <button class="btn btn--solid" data-yes>Apply</button>
           </div>
-        </div>
-      `;
+        </div>`;
       document.body.appendChild(overlay);
-
-      const close = (result) => {
-        overlay.remove();
-        resolve(result);
-      };
-
-      overlay.querySelector("#modal-cancel").addEventListener("click", () => close(false));
-      overlay.querySelector("#modal-apply").addEventListener("click", () => close(true));
-      overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) close(false);
-      });
+      overlay.querySelector("[data-no]").addEventListener("click", () => { overlay.remove(); resolve(false); });
+      overlay.querySelector("[data-yes]").addEventListener("click", () => { overlay.remove(); resolve(true); });
     });
   },
 
   async _apply() {
     if (this._busy) return;
     this._busy = true;
-
     const btn = document.getElementById("colors-apply");
     btn.disabled = true;
-    btn.innerHTML = `<span class="spinner"></span> Applying...`;
-    this._setAllDisabled(true);
+    btn.innerHTML = `<span class="spinner"></span> Applying…`;
 
     const result = await window.gmk87.setLighting({
       underglow: { ...this._ug },
@@ -405,46 +349,33 @@ const ColorsView = {
 
     this._busy = false;
     btn.disabled = false;
-    btn.innerHTML = "Apply Changes";
-    this._setAllDisabled(false);
+    btn.innerHTML = "Apply changes";
 
     if (result.success) {
-      Toast.success("Lighting applied");
-    } else {
-      Toast.error(result.error || "Failed to apply lighting");
-    }
-  },
-
-  _setAllDisabled(disabled) {
-    const body = document.getElementById("colors-body");
-    if (!body) return;
-    body.querySelectorAll("button, select, input").forEach((el) => {
-      if (el.id === "colors-apply") return;
-      el.disabled = disabled;
-    });
+      const toastByTab = {
+        display: "Display updated",
+        underglow: "Underglow updated",
+        led: "LED bar updated",
+      };
+      Toast.success(toastByTab[this._tab] || "Settings applied");
+    } else Toast.error(result.error || "Failed");
   },
 
   _initColorPicker() {
     if (this._colorPicker) return;
-    const hueHex = this._rgbToHex(this._ug.hue.red, this._ug.hue.green, this._ug.hue.blue);
+    const hex = Stage.hexFromRgb(this._ug.hue);
     this._colorPicker = new iro.ColorPicker("#ug-hue-picker", {
-      width: 160,
-      color: hueHex,
-      borderWidth: 2,
-      borderColor: "#333333",
-      handleRadius: 8,
-      layoutDirection: "horizontal",
-      layout: [
-        { component: iro.ui.Wheel, options: {} },
-      ],
+      width: 140,
+      color: hex,
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.1)",
+      handleRadius: 7,
+      layout: [{ component: iro.ui.Wheel }],
     });
     this._colorPicker.on("color:change", (color) => {
       this._ug.hue = { red: color.rgb.r, green: color.rgb.g, blue: color.rgb.b };
     });
   },
-
-  _rgbToHex(r, g, b) {
-    return "#" + [r, g, b].map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, "0")).join("");
-  },
-
 };
+
+// LED swatch colors via CSS data attributes — set in stylesheet

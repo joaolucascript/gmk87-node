@@ -3,7 +3,7 @@ use std::thread;
 use std::time::Duration;
 
 use super::config::{build_config_buffer, parse_config_buffer, DeviceConfig};
-use super::constants::{PRODUCT_ID, REPORT_ID, VENDOR_ID};
+use super::constants::{frame_size, PRODUCT_ID, REPORT_ID, VENDOR_ID};
 use super::util::checksum;
 use serde_json::Value;
 
@@ -244,10 +244,81 @@ where
         let progress = ((pos as f64 / total as f64) * 100.0) as i32;
         if progress > last_progress {
             last_progress = progress;
-            on_progress(progress as u8, "Uploading to device...");
+            on_progress(progress as u8, "Uploading to device…");
         }
     }
     Ok(())
+}
+
+/// Read encoded frame bytes already stored on the keyboard (used to preserve a slot
+/// when uploading only the other one and no local cache exists).
+pub fn read_image_data_from_device<F>(
+    device: &HidDevice,
+    start_byte: u32,
+    total_bytes: usize,
+    mut on_progress: F,
+) -> Result<Vec<u8>, String>
+where
+    F: FnMut(u8, &str),
+{
+    if total_bytes == 0 {
+        return Ok(Vec::new());
+    }
+
+    drain_device(device, 300);
+    send_with_position_required(device, 0x01, &[], 0, "INIT (read)")?;
+
+    let mut data = vec![0u8; total_bytes];
+    let mut pos = 0usize;
+    let mut last_progress = -1i32;
+
+    while pos < total_bytes {
+        let chunk_len = 56.min(total_bytes - pos);
+        let response = send_with_position_required(
+            device,
+            0x22,
+            &[0; 4],
+            start_byte + pos as u32,
+            &format!("read at {}", start_byte + pos as u32),
+        )?;
+
+        if response.is_empty() {
+            return Err("Device returned empty data while reading image slot".into());
+        }
+
+        let copy_len = chunk_len.min(response.len());
+        data[pos..pos + copy_len].copy_from_slice(&response[..copy_len]);
+        pos += chunk_len;
+
+        let progress = ((pos as f64 / total_bytes as f64) * 100.0) as i32;
+        if progress > last_progress {
+            last_progress = progress;
+            on_progress(progress as u8, "Reading from device...");
+        }
+    }
+
+    Ok(data)
+}
+
+pub fn read_slot_buffers_from_device<F>(
+    device: &HidDevice,
+    start_byte: u32,
+    frame_count: usize,
+    mut on_progress: F,
+) -> Result<Vec<Vec<u8>>, String>
+where
+    F: FnMut(u8, &str),
+{
+    let fs = frame_size();
+    let total = frame_count * fs;
+    let raw = read_image_data_from_device(device, start_byte, total, &mut on_progress)?;
+
+    let mut buffers = Vec::with_capacity(frame_count);
+    for i in 0..frame_count {
+        let start = i * fs;
+        buffers.push(raw[start..start + fs].to_vec());
+    }
+    Ok(buffers)
 }
 
 pub fn read_config() -> Result<DeviceConfig, String> {
@@ -298,8 +369,9 @@ where
         send_with_position_required(device, 0x06, &new_config, 0, "CONFIG")?;
         send_with_position_required(device, 0x02, &[], 0, "COMMIT")?;
         start_upload_session(device)?;
-        on_progress(20, "Uploading image data...");
-        send_frame_data(device, upload_data, 0, &mut on_progress)?;
+        send_frame_data(device, upload_data, 0, |pct, _| {
+            on_progress(pct, "Uploading to device…");
+        })?;
         send_with_position_required(device, 0x02, &[], 0, "upload COMMIT")?;
         Ok(())
     })

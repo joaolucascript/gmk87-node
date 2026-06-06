@@ -28,14 +28,11 @@ struct UploadProgress {
     status: String,
 }
 
-#[derive(serde::Deserialize)]
-struct UploadImageArgs {
-    #[serde(rename = "slot0File", default)]
-    slot0_file: Option<String>,
-    #[serde(rename = "slot1File", default)]
-    slot1_file: Option<String>,
-    #[serde(rename = "frameDuration", default)]
-    frame_duration: Option<u16>,
+#[derive(Serialize, Clone)]
+struct UploadFinished {
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[tauri::command]
@@ -57,26 +54,47 @@ fn keyboard_read_config() -> Result<DeviceConfig, String> {
 }
 
 #[tauri::command]
-fn keyboard_upload_image(app: AppHandle, args: UploadImageArgs) -> Result<(), String> {
-    let slot0 = args.slot0_file.as_ref().map(PathBuf::from);
-    let slot1 = args.slot1_file.as_ref().map(PathBuf::from);
+fn keyboard_upload_image(
+    app: AppHandle,
+    slot0_file: Option<String>,
+    slot1_file: Option<String>,
+    frame_duration: Option<u16>,
+) -> Result<(), String> {
+    let slot0 = slot0_file.map(PathBuf::from);
+    let slot1 = slot1_file.map(PathBuf::from);
     let cache = default_cache_dir();
 
-    upload_from_paths(
-        slot0.as_deref(),
-        slot1.as_deref(),
-        args.frame_duration,
-        &cache,
-        |percent, status| {
-            let _ = app.emit(
-                "upload:progress",
-                UploadProgress {
-                    percent,
-                    status: status.to_string(),
-                },
-            );
-        },
-    )
+    std::thread::spawn(move || {
+        let result = upload_from_paths(
+            slot0.as_deref(),
+            slot1.as_deref(),
+            frame_duration,
+            &cache,
+            |percent, status| {
+                let _ = app.emit(
+                    "upload:progress",
+                    UploadProgress {
+                        percent,
+                        status: status.to_string(),
+                    },
+                );
+            },
+        );
+
+        let finished = match result {
+            Ok(()) => UploadFinished {
+                success: true,
+                error: None,
+            },
+            Err(e) => UploadFinished {
+                success: false,
+                error: Some(e),
+            },
+        };
+        let _ = app.emit("upload:finished", finished);
+    });
+
+    Ok(())
 }
 
 #[tauri::command]

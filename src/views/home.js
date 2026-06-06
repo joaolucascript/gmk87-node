@@ -1,197 +1,176 @@
-/**
- * Home view - Device info and current config
- */
-
-const EFFECT_NAMES = [
-  "Off",
-  "Horizontal Dimming Wave",
-  "Horizontal Pulse Wave",
-  "Waterfall",
-  "Full Cycling Colors",
-  "Breathing",
-  "Full One Color",
-  "Glow Pressed Key",
-  "Glow Spreading",
-  "Glow Row",
-  "Random Pattern",
-  "Rainbow Cycle",
-  "Rainbow Waterfall",
-  "Wave from Center",
-  "Circling JK",
-  "Raining",
-  "Wave Left-Right",
-  "Slow Saturation Cycle",
-  "Slow Rainbow from Center",
-];
-
-const LED_MODE_NAMES = [
-  "Blinking One Color",
-  "Pulse Rainbow",
-  "Blinking One Color Alt",
-  "Fixed Color",
-  "Fixed Color Alt",
-];
-
-const DISPLAY_SLOT_NAMES = ["Clock", "Slot 0 Image", "Slot 1 Image"];
-
 const HomeView = {
-  async render() {
-    const content = document.getElementById("content");
-    content.innerHTML = `
-      <div class="page-header">
-        <h1 class="page-title">Home</h1>
-        <p class="page-subtitle">Device information and current configuration</p>
-      </div>
-      <div id="home-body">
-        <div class="empty-state">
-          <div class="spinner" style="margin: 0 auto 16px;"></div>
-          <p class="empty-state-desc">Connecting to keyboard...</p>
-        </div>
-      </div>
-    `;
-    await this.loadData();
-  },
 
-  async loadData() {
-    const body = document.getElementById("home-body");
-    if (!body) return;
+  async render() {
+
+    const controls = document.getElementById("panel-controls");
+
+
+
+    controls.innerHTML = `<div class="state-block"><div class="spinner"></div><p class="state-desc">Connecting…</p></div>`;
+
+
 
     const infoResult = await window.gmk87.getInfo();
 
+
+
     if (!infoResult.success) {
-      body.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-state-icon">&#x2328;</div>
-          <p class="empty-state-title">Keyboard not found</p>
-          <p class="empty-state-desc">${this._escapeHtml(infoResult.error)}</p>
-          <button class="btn" id="home-retry">Retry</button>
-        </div>
-      `;
-      document.getElementById("home-retry").addEventListener("click", () => this.loadData());
+
+      Shell.setConnected(false);
+
+      controls.innerHTML = `
+
+        <div class="state-block">
+
+          <span class="material-symbols-outlined state-icon">usb_off</span>
+
+          <p class="state-title">No device</p>
+
+          <p class="state-desc">${this._esc(infoResult.error)}</p>
+
+          <button class="btn btn--solid" id="home-retry">Retry</button>
+
+        </div>`;
+
+      document.getElementById("home-retry").addEventListener("click", () => this.render());
+
       return;
+
     }
 
-    const info = infoResult.data;
-    let configHtml = `
-      <div class="empty-state">
-        <div class="spinner" style="margin: 0 auto 16px;"></div>
-        <p class="empty-state-desc">Reading configuration...</p>
-      </div>
-    `;
 
-    body.innerHTML = `
-      <div class="card section-gap">
-        <div class="card-title">Device</div>
-        <div class="info-row">
-          <span class="info-label">Product</span>
-          <span class="info-value">${this._escapeHtml(info.product || "Unknown")}</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Manufacturer</span>
-          <span class="info-value">${this._escapeHtml(info.manufacturer || "Unknown")}</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Vendor ID</span>
-          <span class="info-value">0x${(info.vendorId || 0).toString(16).padStart(4, "0")}</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Product ID</span>
-          <span class="info-value">0x${(info.productId || 0).toString(16).padStart(4, "0")}</span>
-        </div>
+
+    Shell.setConnected(true);
+
+    const info = infoResult.data;
+
+
+
+    controls.innerHTML = `
+
+      <div class="panel-head">
+
+        <h2>${this._esc(info.product || "GMK87")}</h2>
+
+        <button class="btn btn--ghost btn--sm" id="home-refresh">Refresh</button>
+
       </div>
-      <div class="flex-between section-gap">
-        <div class="card-title" style="margin-bottom:0">Configuration</div>
-        <button class="btn btn-sm" id="home-refresh">Refresh</button>
-      </div>
-      <div id="config-body">${configHtml}</div>
-    `;
+
+      <dl class="spec-list">
+
+        <div><dt>Manufacturer</dt><dd>${this._esc(info.manufacturer || "—")}</dd></div>
+
+        <div><dt>Vendor ID</dt><dd>0x${(info.vendorId || 0).toString(16).padStart(4, "0")}</dd></div>
+
+        <div><dt>Product ID</dt><dd>0x${(info.productId || 0).toString(16).padStart(4, "0")}</dd></div>
+
+      </dl>
+
+      <div id="home-config"><div class="state-block state-block--compact"><div class="spinner"></div></div></div>`;
+
+
 
     document.getElementById("home-refresh").addEventListener("click", () => this.loadConfig());
+
     await this.loadConfig();
+
   },
 
-  async loadConfig() {
-    const configBody = document.getElementById("config-body");
-    if (!configBody) return;
 
-    configBody.innerHTML = `
-      <div class="empty-state">
-        <div class="spinner" style="margin: 0 auto 16px;"></div>
-        <p class="empty-state-desc">Reading configuration...</p>
-      </div>
-    `;
+
+  async loadConfig() {
+
+    const box = document.getElementById("home-config");
+
+    if (!box) return;
+
+
 
     const result = await window.gmk87.readConfig();
 
     if (!result.success) {
-      configBody.innerHTML = `
-        <div class="card">
-          <p style="color: var(--error); font-size: 13px;">${this._escapeHtml(result.error)}</p>
-        </div>
-      `;
+
+      box.innerHTML = `<p class="error-text">${this._esc(result.error)}</p>`;
+
       return;
+
     }
 
+
+
     const cfg = result.data;
+
     const ug = cfg.underglow || {};
+
     const led = cfg.led || {};
 
-    configBody.innerHTML = `
-      <div class="card" style="margin-bottom: 16px;">
-        <div class="card-title">Underglow</div>
-        <div class="info-row">
-          <span class="info-label">Effect</span>
-          <span class="info-value">${EFFECT_NAMES[ug.effect] || `#${ug.effect}`}</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Brightness</span>
-          <span class="info-value">${ug.brightness ?? "?"}/9</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Speed</span>
-          <span class="info-value">${ug.speed ?? "?"}/9</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Rainbow</span>
-          <span class="info-value">${ug.rainbow ? "On" : "Off"}</span>
-        </div>
-      </div>
-      <div class="card" style="margin-bottom: 16px;">
-        <div class="card-title">LED</div>
-        <div class="info-row">
-          <span class="info-label">Mode</span>
-          <span class="info-value">${LED_MODE_NAMES[led.mode] || `#${led.mode}`}</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Rainbow</span>
-          <span class="info-value">${led.rainbow ? "On" : "Off"}</span>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-title">Display</div>
-        <div class="info-row">
-          <span class="info-label">Showing</span>
-          <span class="info-value">${DISPLAY_SLOT_NAMES[cfg.showImage] || `#${cfg.showImage}`}</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Slot 0 Frames</span>
-          <span class="info-value">${cfg.image1Frames ?? 0}</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Slot 1 Frames</span>
-          <span class="info-value">${cfg.image2Frames ?? 0}</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Frame Duration</span>
-          <span class="info-value">${cfg.frameDuration ?? 0}ms</span>
-        </div>
-      </div>
-    `;
+
+
+    box.innerHTML = Stage.statGrid([
+
+      { label: "Underglow", value: EFFECT_NAMES[ug.effect] || "—" },
+
+      { label: "Brightness", value: `${ug.brightness ?? "?"}/9` },
+
+      { label: "LED bar", value: LED_MODE_NAMES[led.mode] || "—" },
+
+      { label: "Display", value: DISPLAY_SLOT_NAMES[cfg.showImage] || "—" },
+
+      { label: "Slot 0 frames", value: cfg.image1Frames ?? 0 },
+
+      { label: "Slot 1 frames", value: cfg.image2Frames ?? 0 },
+
+    ]);
+
   },
 
-  _escapeHtml(str) {
-    const div = document.createElement("div");
-    div.textContent = str;
-    return div.innerHTML;
+
+
+  _esc(str) {
+
+    const d = document.createElement("div");
+
+    d.textContent = str;
+
+    return d.innerHTML;
+
   },
+
 };
+
+
+
+const EFFECT_NAMES = [
+  "Off",
+  "Wave (soft)",
+  "Wave (pulse)",
+  "Waterfall",
+  "Color cycle",
+  "Breathing",
+  "Solid color",
+  "Glow on keypress",
+  "Ripple on keypress",
+  "Row on keypress",
+  "Random",
+  "Rainbow",
+  "Rainbow waterfall",
+  "Wave from center",
+  "Spiral",
+  "Rain drops",
+  "Wave (bounce)",
+  "Hue shift",
+  "Rainbow from center",
+];
+
+const LED_MODE_NAMES = [
+  "Pulse",
+  "Rainbow pulse",
+  "Pulse (alt)",
+  "Solid",
+  "Solid (alt)",
+];
+
+
+
+const DISPLAY_SLOT_NAMES = ["Clock", "Slot 0", "Slot 1"];
+

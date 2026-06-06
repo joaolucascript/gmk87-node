@@ -26,9 +26,11 @@ Go to [Releases](https://github.com/codedgar/gmk87-node/releases/latest) and dow
 
 | OS | File |
 |---|---|
-| Windows | `.exe` installer |
+| Windows | `gmk87-configurator.exe` (portable, no installer) |
 | macOS | `.dmg` |
 | Linux | `.AppImage` or `.deb` |
+
+> **Windows:** Requires [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (included in Windows 10/11). Download the `.exe` and run — no installation.
 
 > **Linux users:** Copy the included `50-gmk87.rules` to `/etc/udev/rules.d/` and reload udev to allow HID access without root. See `linux-setup.txt` for details.
 
@@ -51,11 +53,45 @@ npm run dev
 
 ### Build
 
+**Windows (portable `.exe`):**
+
+```bash
+npm run build:portable
+```
+
+Output: `src-tauri/target/release/gmk87-configurator.exe`
+
+**macOS:**
+
 ```bash
 npm run build
 ```
 
-Installers are written to `src-tauri/target/release/bundle/`.
+Output: `src-tauri/target/release/bundle/dmg/*.dmg`
+
+**Linux (AppImage — portable, no install):**
+
+Must be built on Linux (or WSL2). Install [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#linux) first:
+
+```bash
+sudo apt update
+sudo apt install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev libssl-dev
+npm install
+npm run build:appimage
+```
+
+Output: `src-tauri/target/release/bundle/appimage/*.AppImage`
+
+Run it:
+
+```bash
+chmod +x "src-tauri/target/release/bundle/appimage/"*.AppImage
+./src-tauri/target/release/bundle/appimage/*.AppImage
+```
+
+> **From Windows:** use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) with Ubuntu, clone the repo inside WSL, and run the commands above. AppImage cannot be built natively on Windows.
+
+Releases on GitHub also include the AppImage (built automatically on Linux in CI).
 
 ## Project layout
 

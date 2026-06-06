@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "build:portable": "tauri build --bundles nsis,appimage,dmg"
+    "build:portable": "tauri build --no-bundle",
+    "build:appimage": "tauri build --bundles appimage"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",

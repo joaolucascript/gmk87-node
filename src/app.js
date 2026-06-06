@@ -1,5 +1,5 @@
 /**
- * SPA Router and view management
+ * SPA router
  */
 const App = {
   _currentView: null,
@@ -13,10 +13,9 @@ const App = {
   },
 
   init() {
-    if (this._started) {
-      return;
-    }
+    if (this._started) return;
     this._started = true;
+    Shell.init();
     window.addEventListener("hashchange", () => this.route());
     this.route();
   },
@@ -29,26 +28,26 @@ const App = {
       return;
     }
 
-    if (this._currentView && this._currentView.destroy) {
+    if (this._currentView?.destroy) {
       this._currentView.destroy();
     }
 
     this._currentView = view;
-    Sidebar.render(hash);
+    Shell.setActiveRoute(hash);
+    Shell.clearWorkspace();
     view.render();
+    Shell.showWorkspace();
   },
 };
 
 function showBootError(message) {
-  const content = document.getElementById("content");
-  if (!content) {
-    return;
-  }
-  content.innerHTML = `
-    <div class="empty-state">
-      <p class="empty-state-title">Failed to start</p>
-      <p class="empty-state-desc">${message}</p>
+  Shell.init();
+  document.getElementById("panel-controls").innerHTML = `
+    <div class="state-block">
+      <p class="state-title">Failed to start</p>
+      <p class="state-desc">${message}</p>
     </div>`;
+  Shell.showWorkspace();
 }
 
 function boot() {
@@ -60,13 +59,9 @@ function boot() {
 }
 
 window.addEventListener("gmk87-ready", boot);
-
-if (window.gmk87) {
-  boot();
-} else {
+if (window.gmk87) boot();
+else {
   setTimeout(() => {
-    if (!App._started) {
-      showBootError("Tauri bridge did not load. Restart the app.");
-    }
+    if (!App._started) showBootError("Tauri bridge did not load. Restart the app.");
   }, 5000);
 }

@@ -35,7 +35,15 @@ fn resize_rgba(frame: RgbaImage) -> DynamicImage {
     DynamicImage::ImageRgba8(frame).resize_exact(DISPLAY_WIDTH, DISPLAY_HEIGHT, FilterType::Lanczos3)
 }
 
-pub fn extract_frames_from_file(path: &Path) -> Result<Vec<Vec<u8>>, String> {
+pub fn extract_frames_from_file_with_progress(
+    path: &Path,
+    mut on_progress: impl FnMut(u8, &str),
+) -> Result<Vec<Vec<u8>>, String> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("image");
+
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -43,14 +51,17 @@ pub fn extract_frames_from_file(path: &Path) -> Result<Vec<Vec<u8>>, String> {
         .to_lowercase();
 
     if ext == "gif" {
+        on_progress(0, &format!("Decoding {name}…"));
         let file = File::open(path).map_err(|e| e.to_string())?;
         let decoder = GifDecoder::new(BufReader::new(file)).map_err(|e| e.to_string())?;
         let mut out = Vec::new();
-        for frame in decoder.into_frames() {
+        for (i, frame) in decoder.into_frames().enumerate() {
             let frame = frame.map_err(|e| e.to_string())?;
             let rgba = frame.into_buffer();
             let img = resize_rgba(rgba);
             out.push(build_raw_image_data(&img));
+            let pct = (((i + 1) as u16 * 100) / MAX_TOTAL_FRAMES as u16).min(99) as u8;
+            on_progress(pct, &format!("Decoding {name}… frame {}", i + 1));
         }
         if out.is_empty() {
             return Err("GIF contains no frames".into());
@@ -58,6 +69,7 @@ pub fn extract_frames_from_file(path: &Path) -> Result<Vec<Vec<u8>>, String> {
         return Ok(out);
     }
 
+    on_progress(0, &format!("Processing {name}…"));
     let img = ImageReader::open(path)
         .map_err(|e| e.to_string())?
         .decode()

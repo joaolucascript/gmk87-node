@@ -2,11 +2,17 @@ use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
-use super::cache::{load_slot_buffers, save_slot_buffers};
+use super::cache::{
+    load_slot_buffers, load_slot_buffers_any, load_slot_source_any, save_slot_buffers,
+};
 use super::config::build_config_buffer;
 use super::constants::{frame_size, MAX_TOTAL_FRAMES};
-use super::device::{read_config_from_device, run_upload_session, with_device};
-use super::image::{extract_frames_from_file, gif_average_delay_ms, truncate_frame_lists};
+use super::device::{
+    read_config_from_device, read_slot_buffers_from_device, run_upload_session, with_device,
+};
+use super::image::{
+    extract_frames_from_file_with_progress, gif_average_delay_ms, truncate_frame_lists,
+};
 
 pub struct UploadOptions {
     pub slot0_file: Option<PathBuf>,
@@ -17,19 +23,108 @@ pub struct UploadOptions {
     pub slot_cache_dir: PathBuf,
 }
 
+fn restore_slot_buffers(
+    slot_index: u8,
+    frame_count: usize,
+    cache_dir: &Path,
+    on_progress: &mut dyn FnMut(u8, &str),
+) -> Result<Vec<Vec<u8>>, String> {
+    if frame_count == 0 {
+        return Ok(vec![vec![0u8; frame_size()]]);
+    }
+
+    if let Some(cached) = load_slot_buffers(cache_dir, slot_index)
+        .or_else(|| load_slot_buffers_any(slot_index))
+    {
+        if cached.len() == frame_count {
+            return Ok(cached);
+        }
+    }
+
+    if let Some(source) = load_slot_source_any(slot_index) {
+        on_progress(12, &format!("Restoring slot {slot_index} from saved file…"));
+        let frames = extract_frames_from_file_with_progress(&source, |local, msg| {
+            let pct = 12 + ((local as u16 * 6) / 100);
+            on_progress(pct.min(18) as u8, msg);
+        })?;
+        if frames.len() == frame_count {
+            save_slot_buffers(cache_dir, slot_index, &frames, Some(&source))?;
+            return Ok(frames);
+        }
+    }
+
+    on_progress(12, &format!("Reading slot {slot_index} from device…"));
+    let start_byte = 0u32;
+
+    let buffers = with_device(|device| {
+        read_slot_buffers_from_device(device, start_byte, frame_count, |pct, status| {
+            let overall = 12 + ((pct as u16 * 8) / 100);
+            on_progress(overall.min(20) as u8, status);
+        })
+    })?;
+
+    save_slot_buffers(cache_dir, slot_index, &buffers, None)?;
+    Ok(buffers)
+}
+
+const DECODE_PROGRESS_MIN: u8 = 1;
+const DECODE_PROGRESS_MAX: u8 = 10;
+
+fn decode_progress_range(decode_index: usize, decode_count: usize) -> (u16, u16) {
+    let span = (DECODE_PROGRESS_MAX - DECODE_PROGRESS_MIN) as u16;
+    let count = decode_count.max(1) as u16;
+    let start = DECODE_PROGRESS_MIN as u16 + (decode_index as u16 * span) / count;
+    let end = if decode_index + 1 >= decode_count {
+        DECODE_PROGRESS_MAX as u16
+    } else {
+        DECODE_PROGRESS_MIN as u16 + ((decode_index + 1) as u16 * span) / count
+    };
+    (start, end.max(start + 1))
+}
+
+fn map_decode_progress<F>(
+    decode_index: usize,
+    decode_count: usize,
+    local_pct: u8,
+    msg: &str,
+    on_progress: &mut F,
+) where
+    F: FnMut(u8, &str),
+{
+    let (start, end) = decode_progress_range(decode_index, decode_count);
+    let range = end - start;
+    let pct = start + ((local_pct as u16 * range) / 100);
+    on_progress(pct.min(end) as u8, msg);
+}
+
 pub fn upload_images<F>(options: UploadOptions, mut on_progress: F) -> Result<(), String>
 where
     F: FnMut(u8, &str),
 {
+    on_progress(0, "Processing images…");
+
+    let decode_count = usize::from(options.slot0_file.is_some())
+        + usize::from(options.slot1_file.is_some());
+    let decode_count = decode_count.max(1);
+
     let mut frames0 = options
         .slot0_file
         .as_ref()
-        .map(|p| extract_frames_from_file(p))
+        .map(|p| {
+            extract_frames_from_file_with_progress(p, |local, msg| {
+                map_decode_progress(0, decode_count, local, &msg, &mut on_progress);
+            })
+        })
         .transpose()?;
     let mut frames1 = options
         .slot1_file
         .as_ref()
-        .map(|p| extract_frames_from_file(p))
+        .map(|p| {
+            let decode_index = usize::from(options.slot0_file.is_some());
+            extract_frames_from_file_with_progress(p, |local, msg| {
+                map_decode_progress(decode_index, decode_count, local, &msg, &mut on_progress);
+            })
+        })
         .transpose()?;
 
     let mut preserved0 = 1usize;
@@ -43,7 +138,7 @@ where
 
     (frames0, frames1) = truncate_frame_lists(frames0, frames1, preserved0, preserved1);
 
-    on_progress(0, "Processing images...");
+    on_progress(12, "Preparing image data…");
 
     let mut frame_duration = options.frame_duration;
     if frame_duration.is_none() {
@@ -64,41 +159,46 @@ where
         }
     }
 
-    on_progress(12, "Preparing image data...");
-
     let mut slot0_buffers = frames0.unwrap_or_default();
     let mut slot1_buffers = frames1.unwrap_or_default();
     let paths0 = options.slot0_file.is_some();
     let paths1 = options.slot1_file.is_some();
-
-    if !paths0 && slot0_buffers.is_empty() {
-        if let Some(cached) = load_slot_buffers(&options.slot_cache_dir, 0) {
-            slot0_buffers = cached;
-        }
-    }
-    if !paths1 && slot1_buffers.is_empty() {
-        if let Some(cached) = load_slot_buffers(&options.slot_cache_dir, 1) {
-            slot1_buffers = cached;
-        }
-    }
+    let cache_dir = &options.slot_cache_dir;
 
     let current = with_device(read_config_from_device)?;
+    let device_frames0 = current[34] as usize;
+    let device_frames1 = current[46] as usize;
+
+    if !paths0 && slot0_buffers.is_empty() && device_frames0 > 0 {
+        slot0_buffers = restore_slot_buffers(0, device_frames0, cache_dir, &mut on_progress)?;
+    }
+    if !paths1 && slot1_buffers.is_empty() && device_frames1 > 0 {
+        let start_byte = (slot0_buffers.len() * frame_size()) as u32;
+        on_progress(12, "Reading slot 1 from device…");
+        slot1_buffers = with_device(|device| {
+            read_slot_buffers_from_device(device, start_byte, device_frames1, |pct, status| {
+                let overall = 12 + ((pct as u16 * 8) / 100);
+                on_progress(overall.min(20) as u8, status);
+            })
+        })?;
+        save_slot_buffers(cache_dir, 1, &slot1_buffers, None)?;
+    }
 
     if slot0_buffers.is_empty() {
-        if current[34] == 0 {
+        if device_frames0 == 0 {
             slot0_buffers.push(vec![0u8; frame_size()]);
         } else {
             return Err(
-                "Cannot update the other slot without slot 0 data. Select a file for slot 0 or upload it once before updating slot 1.".into(),
+                "Could not preserve slot 0. Select the same GIF/image for slot 0, or upload both slots together once.".into(),
             );
         }
     }
     if slot1_buffers.is_empty() {
-        if current[46] == 0 {
+        if device_frames1 == 0 {
             slot1_buffers.push(vec![0u8; frame_size()]);
         } else {
             return Err(
-                "Cannot update the other slot without slot 1 data. Select a file for slot 1 or upload it once before updating slot 0.".into(),
+                "Could not preserve slot 1. Select a file for slot 1, or upload both slots together once.".into(),
             );
         }
     }
@@ -141,10 +241,20 @@ where
     on_progress(100, "Upload complete");
 
     if paths0 {
-        save_slot_buffers(&options.slot_cache_dir, 0, &slot0_buffers)?;
+        save_slot_buffers(
+            cache_dir,
+            0,
+            &slot0_buffers,
+            options.slot0_file.as_deref(),
+        )?;
     }
     if paths1 {
-        save_slot_buffers(&options.slot_cache_dir, 1, &slot1_buffers)?;
+        save_slot_buffers(
+            cache_dir,
+            1,
+            &slot1_buffers,
+            options.slot1_file.as_deref(),
+        )?;
     }
 
     Ok(())
