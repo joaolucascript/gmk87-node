@@ -110,8 +110,8 @@ function setupIpcHandlers() {
       if (frameDuration !== undefined) {
         options.frameDuration = frameDuration;
       }
-      await gmk87.uploadImage(imagePath, slot, options);
-      return { success: true };
+      const result = await gmk87.uploadImage(imagePath, slot, options);
+      return { success: true, warning: result?.warning || null };
     } catch (err) {
       return { success: false, error: err.message };
     }

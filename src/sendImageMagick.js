@@ -10,7 +10,7 @@ import path from "path";
 import fs from "fs";
 import Jimp from "jimp";
 import { GifReader } from "omggif";
-import { uploadImageToDevice } from "./lib/device.js";
+import { uploadImageToDevice, MAX_TOTAL_FRAMES } from "./lib/device.js";
 
 const DISPLAY_WIDTH = 240;
 const DISPLAY_HEIGHT = 135;
@@ -41,6 +41,85 @@ function parseArgs(argv) {
     }
   }
   return out;
+}
+
+/**
+ * Returns average frame delay from a GIF in milliseconds (min 60)
+ * @param {string} inPath - Path to GIF file
+ * @returns {number|null} Average delay in ms, or null if not a GIF
+ */
+function getGifAverageDelayMs(inPath) {
+  const buf = fs.readFileSync(inPath);
+  const reader = new GifReader(buf);
+  const frameCount = reader.numFrames();
+  if (frameCount === 0) return null;
+
+  let totalCs = 0;
+  for (let i = 0; i < frameCount; i++) {
+    totalCs += reader.frameInfo(i).delay || 0;
+  }
+
+  // GIF delay is in centiseconds (1/100 s)
+  const avgMs = Math.round((totalCs / frameCount) * 10);
+  return Math.max(60, avgMs);
+}
+
+/**
+ * Truncates frame lists to fit the hardware limit without over-cutting single-slot GIFs
+ * @param {string[]|null} frames0 - Frame paths for slot 0
+ * @param {string[]|null} frames1 - Frame paths for slot 1
+ * @param {number} [maxTotal=MAX_TOTAL_FRAMES] - Max frames across both slots
+ * @returns {{ frames0: string[]|null, frames1: string[]|null, warning: string|null }}
+ */
+function truncateFrameLists(frames0, frames1, maxTotal = MAX_TOTAL_FRAMES) {
+  const n0 = frames0 ? frames0.length : 0;
+  const n1 = frames1 ? frames1.length : 0;
+  const count0 = frames0 ? n0 : 1;
+  const count1 = frames1 ? n1 : 1;
+
+  if (count0 + count1 <= maxTotal) {
+    return { frames0, frames1, warning: null };
+  }
+
+  let target0;
+  let target1;
+
+  if (frames0 && !frames1) {
+    target0 = maxTotal - 1;
+    target1 = 1;
+  } else if (frames1 && !frames0) {
+    target0 = 1;
+    target1 = maxTotal - 1;
+  } else {
+    target0 = Math.max(1, Math.round((n0 * maxTotal) / (n0 + n1)));
+    target1 = maxTotal - target0;
+    if (target1 < 1) {
+      target1 = 1;
+      target0 = maxTotal - 1;
+    }
+  }
+
+  const parts = [];
+  let out0 = frames0;
+  let out1 = frames1;
+
+  if (frames0 && n0 > target0) {
+    parts.push(`slot 0: ${n0} → ${target0}`);
+    out0 = frames0.slice(0, target0);
+  }
+  if (frames1 && n1 > target1) {
+    parts.push(`slot 1: ${n1} → ${target1}`);
+    out1 = frames1.slice(0, target1);
+  }
+
+  const warning =
+    parts.length > 0
+      ? `GIF truncated (${parts.join(", ")}). Max ${maxTotal} frames total across both slots.`
+      : null;
+
+  if (warning) console.warn(`  ${warning}`);
+
+  return { frames0: out0, frames1: out1, warning };
 }
 
 /**
@@ -152,8 +231,8 @@ async function extractFramesFromFile(inPath, outDir) {
  * @param {boolean} [options.showAfter=true] - Whether to display the image after upload
  * @param {string} [options.slot0File] - Path to slot 0 image file
  * @param {string} [options.slot1File] - Path to slot 1 image file
- * @param {number} [options.frameDuration] - Animation delay in ms (min 60, default 100 for GIFs)
- * @returns {Promise<void>} Resolves when upload is complete
+ * @param {number} [options.frameDuration] - Animation delay in ms (min 60, default from GIF or 100)
+ * @returns {Promise<{ warning?: string }>} Resolves when upload is complete; may include truncation warning
  */
 export async function processAndSend(
   imagePath,
@@ -161,6 +240,7 @@ export async function processAndSend(
   { showAfter = true, slot0File, slot1File, frameDuration } = {}
 ) {
   const tmpDirs = [];
+  let warning = null;
 
   async function extractFrames(inputPath) {
     if (!inputPath) return null;
@@ -180,31 +260,23 @@ export async function processAndSend(
     let frames0 = await extractFrames(src0);
     let frames1 = await extractFrames(src1);
 
-    // Auto-truncate if total frames exceed the hardware limit
-    // Protocol allows 90, but flash storage on tested hardware caps at 36 total frames
-    const MAX_TOTAL_FRAMES = 36;
-    const count0 = frames0 ? frames0.length : 1; // null slot = 1 blank frame
-    const count1 = frames1 ? frames1.length : 1;
-    if (count0 + count1 > MAX_TOTAL_FRAMES) {
-      const half = Math.floor(MAX_TOTAL_FRAMES / 2);
-      const target0 = frames0 ? Math.min(frames0.length, half) : 1;
-      const target1 = frames1 ? Math.min(frames1.length, MAX_TOTAL_FRAMES - target0) : 1;
-      if (frames0 && frames0.length > target0) {
-        console.log(`  Truncating slot 0 from ${frames0.length} to ${target0} frames (36-frame hardware limit)`);
-        frames0 = frames0.slice(0, target0);
-      }
-      if (frames1 && frames1.length > target1) {
-        console.log(`  Truncating slot 1 from ${frames1.length} to ${target1} frames (36-frame hardware limit)`);
-        frames1 = frames1.slice(0, target1);
-      }
-    }
+    const truncated = truncateFrameLists(frames0, frames1);
+    frames0 = truncated.frames0;
+    frames1 = truncated.frames1;
+    warning = truncated.warning;
 
     // Auto-set frameDuration for GIFs if not explicitly provided
     const totalFrames = (frames0 ? frames0.length : 0) + (frames1 ? frames1.length : 0);
     const isAnimated = totalFrames > 2; // more than 1 frame per slot
     if (frameDuration === undefined && isAnimated) {
-      frameDuration = 100; // default 100ms for animations (matches Python DEFAULT_ANIMATION_DELAY_MS)
-      console.log(`  Using default animation delay: ${frameDuration}ms`);
+      const gifPath =
+        src0 && path.extname(src0).toLowerCase() === ".gif"
+          ? src0
+          : src1 && path.extname(src1).toLowerCase() === ".gif"
+            ? src1
+            : null;
+      frameDuration = gifPath ? getGifAverageDelayMs(gifPath) : 100;
+      console.log(`  Using animation delay: ${frameDuration}ms`);
     }
 
     await uploadImageToDevice(imagePath, imageIndex, {
@@ -213,6 +285,8 @@ export async function processAndSend(
       slot1Paths: frames1,
       frameDuration,
     });
+
+    return warning ? { warning } : {};
   } finally {
     for (const dir of tmpDirs) {
       try { fs.rmSync(dir, { recursive: true }); } catch {}

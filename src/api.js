@@ -7,7 +7,7 @@
  *   // Upload static images to both slots
  *   await gmk87.uploadImage("cat.png", 0, { slot0File: "cat.png", slot1File: "dog.jpg" });
  *
- *   // Upload a GIF (auto-extracts frames, max 36 total across both slots)
+ *   // Upload a GIF (auto-extracts frames, max 90 total across both slots)
  *   await gmk87.uploadImage("anim.gif", 0, { slot0File: "anim.gif", frameDuration: 100 });
  *
  *   // Upload GIFs to both slots

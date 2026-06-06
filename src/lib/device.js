@@ -25,6 +25,9 @@ const DISPLAY_WIDTH = 240;
 /** @constant {number} Target display height in pixels */
 const DISPLAY_HEIGHT = 135;
 
+/** @constant {number} Max animation frames across both display slots (matches reference.py) */
+const MAX_TOTAL_FRAMES = 90;
+
 /** @type {boolean} Enable verbose protocol debug logging. Set via DEBUG=1 env var. */
 let DEBUG = process.env.DEBUG === "1";
 
@@ -100,9 +103,18 @@ function findDeviceInfo() {
 
   // The Python reference uses USB interface 3 for the config/upload protocol.
   // On macOS, node-hid exposes this as the interface with usagePage 0xFF1C.
-  // Opening by specific interface avoids macOS requiring sudo for keyboard interfaces.
+  // On Windows, interface numbers may differ — usagePage 0xFF1C is the reliable marker.
   const configInterface = matching.find((d) => d.interface === 3);
   if (configInterface) return configInterface;
+
+  const vendorInterface = matching.find((d) => d.usagePage === 0xff1c);
+  if (vendorInterface) return vendorInterface;
+
+  // Avoid standard keyboard interfaces (Generic Desktop) — they won't ACK config commands
+  const nonKeyboard = matching.find(
+    (d) => d.usagePage !== 0x01 && d.usagePage !== 0x0001
+  );
+  if (nonKeyboard) return nonKeyboard;
 
   // Fallback: any matching device
   return matching[0];
@@ -361,6 +373,71 @@ async function sendWithPosition(device, commandId, data, pos = 0) {
   // Timeout - no matching response received
   console.warn(`  ⚠ Timeout waiting for response to command 0x${commandId.toString(16).padStart(2, "0")}`);
   return null;
+}
+
+/**
+ * Sends a command and throws if the device does not acknowledge within retries
+ * @param {HID.HID} device - Connected HID device
+ * @param {number} commandId - Command byte
+ * @param {Buffer} data - Data payload
+ * @param {number} [pos=0] - Position offset
+ * @param {string} [stepName] - Human-readable step name for error messages
+ * @param {number} [retries=3] - Number of attempts
+ * @returns {Promise<Buffer>} Response data from byte 4 onwards
+ */
+async function sendWithPositionRequired(
+  device,
+  commandId,
+  data,
+  pos = 0,
+  stepName = null,
+  retries = 3
+) {
+  const name =
+    stepName || `command 0x${commandId.toString(16).padStart(2, "0")}`;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    if (attempt > 0) {
+      console.log(`  Retrying ${name} (attempt ${attempt + 1}/${retries})...`);
+      await drainDevice(device, 200);
+      await delay(250 * attempt);
+    }
+
+    const response = await sendWithPosition(device, commandId, data, pos);
+    if (response !== null) return response;
+  }
+
+  throw new Error(
+    `Upload failed: keyboard did not respond to ${name}. Check USB connection and try again.`
+  );
+}
+
+/**
+ * Starts an image upload session (READY → INIT)
+ * Retries READY and falls back to passive listen if the device responds asynchronously
+ * @param {HID.HID} device - Connected HID device
+ */
+async function startUploadSession(device) {
+  await drainDevice(device, 300);
+
+  let readyAck = await sendWithPosition(device, 0x23, Buffer.alloc(0), 0);
+  if (!readyAck) {
+    console.log("  Waiting for device ready signal (0x23)...");
+    const gotReady = await waitForReady(device, 5000);
+    if (!gotReady) {
+      throw new Error(
+        "Upload failed: keyboard did not respond to READY (0x23). It may need more time — try again."
+      );
+    }
+  }
+
+  await sendWithPositionRequired(
+    device,
+    0x01,
+    Buffer.alloc(0),
+    0,
+    "INIT after READY"
+  );
 }
 
 /**
@@ -780,57 +857,56 @@ async function uploadImageToDevice(imagePath, imageIndex = 0, options = {}) {
   const slot1FrameCount = paths1 ? paths1.length : 1;
   const totalFrames = slot0FrameCount + slot1FrameCount;
 
-  if (totalFrames > 36) {
-    throw new Error(`Too many frames: ${totalFrames} (slot0: ${slot0FrameCount}, slot1: ${slot1FrameCount}, max 36 total)`);
+  if (totalFrames > MAX_TOTAL_FRAMES) {
+    throw new Error(
+      `Too many frames: ${totalFrames} (slot0: ${slot0FrameCount}, slot1: ${slot1FrameCount}, max ${MAX_TOTAL_FRAMES} total)`
+    );
   }
+
+  // Build image data before opening the device — encoding can take several seconds
+  // and the keyboard may stop responding if there is a long gap before upload.
+  console.log("Building image data for both slots...");
+  const frameSize = ((DISPLAY_WIDTH * DISPLAY_HEIGHT * 2) + 0x7fff) & ~0x7fff;
+
+  const slot0Buffers = [];
+  if (paths0) {
+    for (const p of paths0) {
+      slot0Buffers.push(await buildRawImageData(p));
+    }
+  } else {
+    slot0Buffers.push(Buffer.alloc(frameSize, 0x00));
+  }
+
+  const slot1Buffers = [];
+  if (paths1) {
+    for (const p of paths1) {
+      slot1Buffers.push(await buildRawImageData(p));
+    }
+  } else {
+    slot1Buffers.push(Buffer.alloc(frameSize, 0x00));
+  }
+
+  const concatenatedData = Buffer.concat([...slot0Buffers, ...slot1Buffers]);
+  console.log(`  Slot 0: ${slot0Buffers.length} frame(s) (${slot0Buffers.length * frameSize} bytes)`);
+  console.log(`  Slot 1: ${slot1Buffers.length} frame(s) (${slot1Buffers.length * frameSize} bytes)`);
+  console.log(`  Total: ${concatenatedData.length} bytes (${slot0Buffers.length + slot1Buffers.length} frames)`);
 
   let device = openDevice();
 
   try {
     // Step 1: Read current config to preserve all settings
     console.log("Reading current configuration to preserve settings...");
-    const configBuffer = await readConfigFromDevice(device);
-    const currentConfig = parseConfigBuffer(configBuffer);
-    console.log(`  Underglow: effect=${currentConfig.underglow.effect}, brightness=${currentConfig.underglow.brightness}`);
-    console.log(`  LED: mode=${currentConfig.led.mode}, color=${currentConfig.led.color}`);
-
-    // Step 2: Drain device buffer
-    console.log("Clearing device buffer...");
     const stale = await drainDevice(device);
     if (stale.length > 0) {
       console.log(`  Drained ${stale.length} stale messages`);
     }
 
-    // Step 3: Build raw image data for BOTH slots
-    // Upload session overwrites all image memory — must send both slots
-    // Layout matches Python reference: [slot0_frame0, slot0_frame1, ..., slot1_frame0, slot1_frame1, ...]
-    console.log("Building image data for both slots...");
-    const frameSize = ((DISPLAY_WIDTH * DISPLAY_HEIGHT * 2) + 0x7fff) & ~0x7fff;
+    const configBuffer = await readConfigFromDevice(device);
+    const currentConfig = parseConfigBuffer(configBuffer);
+    console.log(`  Underglow: effect=${currentConfig.underglow.effect}, brightness=${currentConfig.underglow.brightness}`);
+    console.log(`  LED: mode=${currentConfig.led.mode}, color=${currentConfig.led.color}`);
 
-    const slot0Buffers = [];
-    if (paths0) {
-      for (const p of paths0) {
-        slot0Buffers.push(await buildRawImageData(p));
-      }
-    } else {
-      slot0Buffers.push(Buffer.alloc(frameSize, 0x00));
-    }
-
-    const slot1Buffers = [];
-    if (paths1) {
-      for (const p of paths1) {
-        slot1Buffers.push(await buildRawImageData(p));
-      }
-    } else {
-      slot1Buffers.push(Buffer.alloc(frameSize, 0x00));
-    }
-
-    const concatenatedData = Buffer.concat([...slot0Buffers, ...slot1Buffers]);
-    console.log(`  Slot 0: ${slot0Buffers.length} frame(s) (${slot0Buffers.length * frameSize} bytes)`);
-    console.log(`  Slot 1: ${slot1Buffers.length} frame(s) (${slot1Buffers.length * frameSize} bytes)`);
-    console.log(`  Total: ${concatenatedData.length} bytes (${slot0Buffers.length + slot1Buffers.length} frames)`);
-
-    // Step 4: Build config preserving all settings, only changing image/display
+    // Step 2: Build config preserving all settings, only changing image/display
     const configChanges = {
       showImage: shownImage,
       image1Frames: paths0 ? slot0FrameCount : currentConfig.image1Frames,
@@ -842,25 +918,23 @@ async function uploadImageToDevice(imagePath, imageIndex = 0, options = {}) {
     }
     const newConfig = buildConfigBuffer(currentConfig, configChanges);
 
-    // Step 5: Upload sequence — matches Python reference exactly:
-    //   update_config():  INIT(0x01) → CONFIG(0x06) → COMMIT(0x02)
-    //   upload_frames():  READY(0x23) → INIT(0x01) → DATA(0x21)×N → COMMIT(0x02)
+    // Step 3: Upload sequence — matches sniffed protocol + Python upload_frames():
+    //   INIT × 2 → CONFIG(0x06) → COMMIT(0x02) → READY(0x23) → INIT(0x01) → DATA(0x21)×N → COMMIT(0x02)
     console.log("Writing config to device...");
-    await sendWithPosition(device, 0x01, Buffer.alloc(0), 0);
-    await sendWithPosition(device, 0x06, newConfig, 0);
-    await sendWithPosition(device, 0x02, Buffer.alloc(0), 0);
+    await sendWithPositionRequired(device, 0x01, Buffer.alloc(0), 0, "INIT (1)");
+    await sendWithPositionRequired(device, 0x01, Buffer.alloc(0), 0, "INIT (2)");
+    await sendWithPositionRequired(device, 0x06, newConfig, 0, "CONFIG");
+    await sendWithPositionRequired(device, 0x02, Buffer.alloc(0), 0, "COMMIT");
 
     console.log("Starting upload session (0x23 → 0x01)...");
-    await sendWithPosition(device, 0x23, Buffer.alloc(0), 0);
-    await sendWithPosition(device, 0x01, Buffer.alloc(0), 0);
+    await startUploadSession(device);
 
-    // Step 6: Send both slots as one continuous stream
+    // Step 4: Send both slots as one continuous stream
     console.log("Uploading image data...");
     await sendFrameData(device, concatenatedData, "both slots");
 
-    // Step 7: Commit
-    const response = await sendWithPosition(device, 0x02, Buffer.alloc(0), 0);
-    if (!response) console.warn("Upload COMMIT may not have been acknowledged");
+    // Step 5: Commit
+    await sendWithPositionRequired(device, 0x02, Buffer.alloc(0), 0, "upload COMMIT");
 
     console.log("✓ Upload complete!");
     return true;
@@ -1096,6 +1170,8 @@ function getKeyboardInfo() {
     product: info.product || "GMK87",
     vendorId: VENDOR_ID,
     productId: PRODUCT_ID,
+    interface: info.interface,
+    usagePage: info.usagePage,
   };
 }
 
@@ -1132,6 +1208,7 @@ export {
   BYTES_PER_FRAME,
   DISPLAY_WIDTH,
   DISPLAY_HEIGHT,
+  MAX_TOTAL_FRAMES,
   // Utilities
   delay,
   toRGB565,
@@ -1150,6 +1227,8 @@ export {
   sendConfigFrame,
   // Python-Compatible Protocol (NEW)
   sendWithPosition,
+  sendWithPositionRequired,
+  startUploadSession,
   readConfigFromDevice,
   parseConfigBuffer,
   buildConfigBuffer,

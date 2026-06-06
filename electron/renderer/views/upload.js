@@ -170,6 +170,9 @@ const UploadView = {
 
     if (result.success) {
       Toast.success("Image uploaded successfully");
+      if (result.warning) {
+        Toast.warn(result.warning);
+      }
     } else {
       Toast.error(result.error || "Upload failed");
     }

@@ -728,6 +728,10 @@ input[type="range"]::-webkit-slider-thumb {
   border-left-color: var(--error);
 }
 
+.toast.warn {
+  border-left-color: #f59e0b;
+}
+
 .toast.fade-out {
   animation: toast-out 0.2s ease-in forwards;
 }
