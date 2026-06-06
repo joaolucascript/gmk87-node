@@ -1,0 +1,14 @@
+[[permission]]
+identifier = "allow-app-commands"
+description = "Allow GMK87 keyboard IPC commands"
+commands.allow = [
+  "keyboard_get_info",
+  "keyboard_read_config",
+  "keyboard_upload_image",
+  "keyboard_set_lighting",
+  "keyboard_apply_preset",
+  "keyboard_get_presets",
+  "keyboard_show_slot",
+  "keyboard_sync_time",
+  "app_get_version",
+]

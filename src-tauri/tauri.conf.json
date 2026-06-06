@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "GMK87 Configurator",
+  "version": "1.0.4",
+  "identifier": "com.codedgar.gmk87-configurator",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "GMK87 Configurator",
+        "width": 960,
+        "height": 680,
+        "minWidth": 800,
+        "minHeight": 600,
+        "backgroundColor": "#0f0f0f"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost blob: data:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": ["presets.json", "../50-gmk87.rules", "../linux-setup.txt"]
+  }
+}
