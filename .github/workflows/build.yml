@@ -47,7 +47,7 @@ jobs:
         run: npm ci
 
       - name: Import macOS signing certificate
-        if: matrix.platform == 'mac' && env.MAC_CERTIFICATE != ''
+        if: matrix.platform == 'mac' && secrets.MAC_CERTIFICATE != ''
         env:
           MAC_CERTIFICATE: ${{ secrets.MAC_CERTIFICATE }}
           MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
@@ -84,16 +84,24 @@ jobs:
           path: src-tauri/target/release/gmk87-configurator.exe
           if-no-files-found: error
 
-      - name: Upload bundles
-        if: matrix.platform != 'win'
+      - name: Upload macOS bundle
+        if: matrix.platform == 'mac'
         uses: actions/upload-artifact@v4
         with:
-          name: gmk87-configurator-${{ matrix.platform }}
+          name: gmk87-configurator-mac
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+      - name: Upload Linux bundles
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gmk87-configurator-linux
           path: |
-            src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.dmg
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/deb/*.deb
+            50-gmk87.rules
+            linux-setup.txt
           if-no-files-found: error
 
   release:
@@ -122,3 +130,5 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/gmk87-configurator.exe
+            artifacts/50-gmk87.rules
+            artifacts/linux-setup.txt
