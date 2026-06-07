@@ -62,7 +62,11 @@ patchFile(path.join(viaBuildDir, "src", "utils", "device-store.ts"), [
   ],
   [
     "    const response = await fetch('/definitions/supported_kbs.json', {",
+    "    const response = await fetch('./definitions/supported_kbs.json', {",
+  ],
+  [
     "    const response = await fetch('../definitions/supported_kbs.json', {",
+    "    const response = await fetch('./definitions/supported_kbs.json', {",
   ],
   [
     `import type {
@@ -87,7 +91,31 @@ import type {
     `  const url = \`/definitions/\${version}/\${vpid}.json\`;
   const response = await fetch(url);
   const json: DefinitionVersionMap[K] = await response.json();`,
+    `  const url = \`./definitions/\${version}/\${vpid}.json\`;
+  const response = await fetch(url);
+  const raw = await response.json();
+  const json: DefinitionVersionMap[K] =
+    version === 'v2'
+      ? isVIADefinitionV2(raw)
+        ? raw
+        : isKeyboardDefinitionV2(raw)
+          ? keyboardDefinitionV2ToVIADefinitionV2(raw)
+          : raw
+      : raw;`,
+  ],
+  [
     `  const url = \`../definitions/\${version}/\${vpid}.json\`;
+  const response = await fetch(url);
+  const raw = await response.json();
+  const json: DefinitionVersionMap[K] =
+    version === 'v2'
+      ? isVIADefinitionV2(raw)
+        ? raw
+        : isKeyboardDefinitionV2(raw)
+          ? keyboardDefinitionV2ToVIADefinitionV2(raw)
+          : raw
+      : raw;`,
+    `  const url = \`./definitions/\${version}/\${vpid}.json\`;
   const response = await fetch(url);
   const raw = await response.json();
   const json: DefinitionVersionMap[K] =

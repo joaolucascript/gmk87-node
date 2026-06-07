@@ -7,21 +7,38 @@ import { fileURLToPath } from "url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const viaBuildDir = path.join(root, ".via-build");
 
+function normalizeNewlines(text) {
+  return text.replace(/\r\n/g, "\n");
+}
+
 function patchFile(filePath, replacements) {
   if (!fs.existsSync(filePath)) {
     console.warn(`Skip (missing): ${filePath}`);
     return;
   }
-  let content = fs.readFileSync(filePath, "utf8");
+  let content = normalizeNewlines(fs.readFileSync(filePath, "utf8"));
   for (const [from, to] of replacements) {
-    if (content.includes(to.slice(0, Math.min(80, to.length)))) {
+    const normalizedFrom = normalizeNewlines(from);
+    const normalizedTo = normalizeNewlines(to);
+    const added =
+      normalizedTo.startsWith(normalizedFrom)
+        ? normalizedTo.slice(normalizedFrom.length).trim()
+        : normalizedTo.trim();
+    if (
+      added.includes("GMK87_VENDOR_PRODUCT_IDS") &&
+      content.includes("GMK87_VENDOR_PRODUCT_IDS")
+    ) {
       continue;
     }
-    if (!content.includes(from)) {
+    const marker = added.slice(0, Math.min(80, added.length));
+    if (marker && content.includes(marker)) {
+      continue;
+    }
+    if (!content.includes(normalizedFrom)) {
       console.warn(`Patch skipped in ${path.basename(filePath)}: ${from.slice(0, 50)}…`);
       continue;
     }
-    content = content.replace(from, to);
+    content = content.replace(normalizedFrom, normalizedTo);
   }
   fs.writeFileSync(filePath, content);
 }
@@ -496,6 +513,11 @@ import useHashLocation from './utils/use-hash-location';`,
 import {Gmk87ResetLayoutBridge} from './utils/gmk87-reset-layout-bridge';`,
   ],
   [
+    `import {Gmk87ResetLayoutBridge} from './utils/gmk87-reset-layout-bridge';
+import {Gmk87ResetLayoutBridge} from './utils/gmk87-reset-layout-bridge';`,
+    `import {Gmk87ResetLayoutBridge} from './utils/gmk87-reset-layout-bridge';`,
+  ],
+  [
     `  return (
     <>
         <TestContext.Provider value={testContextState}>`,
@@ -508,6 +530,14 @@ import {Gmk87ResetLayoutBridge} from './utils/gmk87-reset-layout-bridge';`,
         {hasHIDSupport && <UnconnectedGlobalMenu />}`,
     `        <GlobalStyle />
         <Gmk87ResetLayoutBridge />
+        <Gmk87HostBridge />
+        {hasHIDSupport && <UnconnectedGlobalMenu />}`,
+  ],
+  [
+    `        <Gmk87ResetLayoutBridge />
+        {hasHIDSupport && <UnconnectedGlobalMenu />}`,
+    `        <Gmk87ResetLayoutBridge />
+        <Gmk87HostBridge />
         {hasHIDSupport && <UnconnectedGlobalMenu />}`,
   ],
   [
@@ -620,6 +650,64 @@ export function appendCharToMacroBytes(
   }
 }
 
+const GMK87_MODIFIER_KEYCODES = new Set([
+  'KC_LSFT',
+  'KC_RSFT',
+  'KC_LCTL',
+  'KC_RCTL',
+  'KC_LALT',
+  'KC_RALT',
+  'KC_LGUI',
+  'KC_RGUI',
+]);
+
+function charToTapKeycode(ch: string): RawKeycodeSequenceItem | null {
+  for (const [keycode, [unshifted]] of Object.entries(
+    mapKeycodeToCharacterStream,
+  )) {
+    if (ch === unshifted) {
+      return [RawKeycodeSequenceAction.Tap, keycode];
+    }
+  }
+  return null;
+}
+
+/** GMK87 drops the first character-stream byte after a modifier key-up. */
+export function splitStreamAfterModifierUp(
+  sequence: RawKeycodeSequence,
+): RawKeycodeSequence {
+  const out: RawKeycodeSequence = [];
+  for (let i = 0; i < sequence.length; i++) {
+    const item = sequence[i];
+    if (
+      item[0] === RawKeycodeSequenceAction.Up &&
+      GMK87_MODIFIER_KEYCODES.has(item[1] as string) &&
+      i + 1 < sequence.length &&
+      sequence[i + 1][0] === RawKeycodeSequenceAction.CharacterStream
+    ) {
+      out.push(item);
+      const text = sequence[i + 1][1] as string;
+      if (text.length > 0) {
+        const firstItem =
+          charToTapKeycode(text[0]) ??
+          characterToExplicitKeycodes(text[0])[0] ??
+          [RawKeycodeSequenceAction.CharacterStream, text[0]];
+        out.push(firstItem);
+        if (text.length > 1) {
+          out.push([
+            RawKeycodeSequenceAction.CharacterStream,
+            text.slice(1),
+          ]);
+        }
+      }
+      i += 1;
+      continue;
+    }
+    out.push(item);
+  }
+  return out;
+}
+
 // Convert all down actions of characters (i.e. letters, numbers, punctuation)`,
   ],
   [
@@ -648,6 +736,124 @@ export function sequenceToExpression(`,
         p[p.length - 1][0] === RawKeycodeSequenceAction.CharacterStream
       ) {`,
   ],
+  [
+    `}
+
+// Convert all down actions of characters (i.e. letters, numbers, punctuation)
+// into tap actions and throw away the up actions.
+export function convertCharacterTaps(`,
+    `}
+
+const GMK87_MODIFIER_KEYCODES = new Set([
+  'KC_LSFT',
+  'KC_RSFT',
+  'KC_LCTL',
+  'KC_RCTL',
+  'KC_LALT',
+  'KC_RALT',
+  'KC_LGUI',
+  'KC_RGUI',
+]);
+
+function charToTapKeycode(ch: string): RawKeycodeSequenceItem | null {
+  for (const [keycode, [unshifted]] of Object.entries(
+    mapKeycodeToCharacterStream,
+  )) {
+    if (ch === unshifted) {
+      return [RawKeycodeSequenceAction.Tap, keycode];
+    }
+  }
+  return null;
+}
+
+/** GMK87 drops the first character-stream byte after a modifier key-up. */
+export function splitStreamAfterModifierUp(
+  sequence: RawKeycodeSequence,
+): RawKeycodeSequence {
+  const out: RawKeycodeSequence = [];
+  for (let i = 0; i < sequence.length; i++) {
+    const item = sequence[i];
+    if (
+      item[0] === RawKeycodeSequenceAction.Up &&
+      GMK87_MODIFIER_KEYCODES.has(item[1] as string) &&
+      i + 1 < sequence.length &&
+      sequence[i + 1][0] === RawKeycodeSequenceAction.CharacterStream
+    ) {
+      out.push(item);
+      const text = sequence[i + 1][1] as string;
+      if (text.length > 0) {
+        const firstItem =
+          charToTapKeycode(text[0]) ??
+          characterToExplicitKeycodes(text[0])[0] ??
+          [RawKeycodeSequenceAction.CharacterStream, text[0]];
+        out.push(firstItem);
+        if (text.length > 1) {
+          out.push([
+            RawKeycodeSequenceAction.CharacterStream,
+            text.slice(1),
+          ]);
+        }
+      }
+      i += 1;
+      continue;
+    }
+    out.push(item);
+  }
+  return out;
+}
+
+// Convert all down actions of characters (i.e. letters, numbers, punctuation)
+// into tap actions and throw away the up actions.
+export function convertCharacterTaps(`,
+  ],
+]);
+
+patchFile(path.join(viaBuildDir, "src", "shims", "node-hid.ts"), [
+  [
+    `  devices: async (requestAuthorize = false) => {
+    let devices = await ExtendedHID.getFilteredDevices();
+    // TODO: This is a hack to avoid spamming the requestDevices popup
+    if (devices.length === 0 || requestAuthorize) {
+      try {
+        await ExtendedHID.requestDevice();
+      } catch (e) {
+        // The request seems to fail when the last authorized device is disconnected.
+        return [];
+      }
+      devices = await ExtendedHID.getFilteredDevices();
+    }
+    return devices.map(tagDevice);
+  },`,
+    `  waitForFilteredDevices: async (timeoutMs = 10000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const devices = await ExtendedHID.getFilteredDevices();
+      if (devices.length > 0) {
+        return devices;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    return [];
+  },
+  devices: async (requestAuthorize = false) => {
+    let devices = await ExtendedHID.getFilteredDevices();
+    // TODO: This is a hack to avoid spamming the requestDevices popup
+    if (devices.length === 0 || requestAuthorize) {
+      try {
+        await ExtendedHID.requestDevice();
+      } catch (e) {
+        // Picker may be active elsewhere or dismissed — wait for authorization.
+        devices = await ExtendedHID.waitForFilteredDevices();
+        if (devices.length === 0) {
+          return [];
+        }
+        return devices.map(tagDevice);
+      }
+      devices = await ExtendedHID.getFilteredDevices();
+    }
+    return devices.map(tagDevice);
+  },`,
+  ],
 ]);
 
 patchFile(path.join(viaBuildDir, "src", "utils", "macro-api", "macro-api.ts"), [
@@ -656,6 +862,7 @@ patchFile(path.join(viaBuildDir, "src", "utils", "macro-api", "macro-api.ts"), [
 } from './macro-api.common';`,
     `  MacroTerminator,
   appendCharToMacroBytes,
+  splitStreamAfterModifierUp,
 } from './macro-api.common';`,
   ],
   [
@@ -673,6 +880,23 @@ patchFile(path.join(viaBuildDir, "src", "utils", "macro-api", "macro-api.ts"), [
                 appendCharToMacroBytes(char, bytes, this.basicKeyToByte),
               );
             break;`,
+  ],
+  [
+    `      sequence.forEach((element) => {
+        switch (element[0]) {
+          case RawKeycodeSequenceAction.Tap:
+            bytes.push(KeyAction.Tap, this.basicKeyToByte[element[1]]);`,
+    `      splitStreamAfterModifierUp(sequence).forEach((element) => {
+        switch (element[0]) {
+          case RawKeycodeSequenceAction.Tap:
+            bytes.push(KeyAction.Tap, this.basicKeyToByte[element[1]]);`,
+  ],
+  [
+    `  appendCharToMacroBytes,
+} from './macro-api.common';`,
+    `  appendCharToMacroBytes,
+  splitStreamAfterModifierUp,
+} from './macro-api.common';`,
   ],
 ]);
 
@@ -682,6 +906,7 @@ patchFile(path.join(viaBuildDir, "src", "utils", "macro-api", "macro-api.v11.ts"
 } from './macro-api.common';`,
     `  IMacroAPI,
   appendCharToMacroBytes,
+  splitStreamAfterModifierUp,
 } from './macro-api.common';`,
   ],
   [
@@ -700,9 +925,65 @@ patchFile(path.join(viaBuildDir, "src", "utils", "macro-api", "macro-api.v11.ts"
               );
             break;`,
   ],
+  [
+    `      sequence.forEach((element) => {
+        switch (element[0]) {
+          case RawKeycodeSequenceAction.Tap:
+            bytes.push(
+              KeyActionPrefix,
+              KeyAction.Tap,
+              this.basicKeyToByte[element[1]],
+            );`,
+    `      splitStreamAfterModifierUp(sequence).forEach((element) => {
+        switch (element[0]) {
+          case RawKeycodeSequenceAction.Tap:
+            bytes.push(
+              KeyActionPrefix,
+              KeyAction.Tap,
+              this.basicKeyToByte[element[1]],
+            );`,
+  ],
+  [
+    `  appendCharToMacroBytes,
+} from './macro-api.common';`,
+    `  appendCharToMacroBytes,
+  splitStreamAfterModifierUp,
+} from './macro-api.common';`,
+  ],
 ]);
 
 patchFile(path.join(viaBuildDir, "src", "utils", "device-store.ts"), [
+  [
+    `const hash = await (await fetch('/definitions/hash.json')).json();`,
+    `const hash = document.getElementById('definition_hash')?.dataset.hash || '';`,
+  ],
+  [
+    `    const response = await fetch('/definitions/supported_kbs.json', {`,
+    `    const response = await fetch('./definitions/supported_kbs.json', {`,
+  ],
+  [
+    `    const response = await fetch('../definitions/supported_kbs.json', {`,
+    `    const response = await fetch('./definitions/supported_kbs.json', {`,
+  ],
+  [
+    `  const url = \`/definitions/\${version}/\${vpid}.json\`;
+  const response = await fetch(url);
+  const json: DefinitionVersionMap[K] = await response.json();`,
+    `  const url = \`./definitions/\${version}/\${vpid}.json\`;
+  const response = await fetch(url);
+  const raw = await response.json();
+  const json: DefinitionVersionMap[K] = raw;`,
+  ],
+  [
+    `  const url = \`../definitions/\${version}/\${vpid}.json\`;
+  const response = await fetch(url);
+  const raw = await response.json();
+  const json: DefinitionVersionMap[K] = raw;`,
+    `  const url = \`./definitions/\${version}/\${vpid}.json\`;
+  const response = await fetch(url);
+  const raw = await response.json();
+  const json: DefinitionVersionMap[K] = raw;`,
+  ],
   [
     `    themeName: 'OLIVIA_DARK',`,
     `    themeName: 'BLACK',`,
@@ -1079,6 +1360,44 @@ export const Gmk87ResetLayoutBridge = () => {
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [dispatch, device, api]);
+
+  return null;
+};
+`,
+);
+
+const hostBridgePath = path.join(
+  viaBuildDir,
+  "src",
+  "utils",
+  "gmk87-host-bridge.tsx",
+);
+fs.writeFileSync(
+  hostBridgePath,
+  `import {useEffect} from 'react';
+import {useAppDispatch, useAppSelector} from 'src/store/hooks';
+import {getSelectedConnectedDevice} from 'src/store/devicesSlice';
+import {loadKeymapFromDevice} from 'src/store/keymapSlice';
+
+/** Host window finished resizing — refresh canvas layout and keymap. */
+export const Gmk87HostBridge = () => {
+  const dispatch = useAppDispatch();
+  const device = useAppSelector(getSelectedConnectedDevice);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'gmk87-host-layout-ready') {
+        return;
+      }
+      window.dispatchEvent(new Event('resize'));
+      if (device) {
+        void dispatch(loadKeymapFromDevice(device));
+      }
+    };
+
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [dispatch, device]);
 
   return null;
 };

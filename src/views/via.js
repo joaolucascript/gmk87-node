@@ -6,6 +6,7 @@ const ViaView = {
   _resizeDurationMs: 400,
   _savedBounds: null,
   _resizeGen: 0,
+  _viaLoadGen: 0,
   _recording: false,
   _frame: null,
   _forwardKey: null,
@@ -17,11 +18,20 @@ const ViaView = {
     const panel = document.getElementById("panel-controls");
     workspace.classList.add("workspace--via");
     if (panel) panel.hidden = true;
-    void this._expandWindow();
     this._bindRecordingBridge();
     this._bindViaToasts();
+    this._bindViaReady();
 
     let block = document.getElementById("via-host");
+    if (block?.querySelector(".via-frame-wrap.is-ready")) {
+      void this._expandWindow().then(() => {
+        this._finishViaLayout(block.querySelector(".via-frame-wrap"));
+      });
+      return;
+    }
+
+    const loadGen = ++this._viaLoadGen;
+
     if (!block) {
       block = document.createElement("div");
       block.id = "via-host";
@@ -40,52 +50,79 @@ const ViaView = {
     const frame = document.createElement("iframe");
     frame.className = "via-frame";
     frame.title = "VIA keymap editor";
-    frame.hidden = true;
-    frame.setAttribute("allow", "keyboard-lock; fullscreen");
+    frame.setAttribute("allow", "hid *; keyboard-lock; fullscreen");
     frame.tabIndex = 0;
     this._frame = frame;
 
-    frame.addEventListener("load", () => {
-      const doc = frame.contentDocument;
-      if (doc) {
-        doc.documentElement.setAttribute("data-gmk87-embed", "true");
-        doc.documentElement.setAttribute("data-theme-mode", "dark");
-      }
-      const wrap = block.querySelector(".via-frame-wrap");
-      const started = Date.now();
-      const waitForUi = () => {
-        const root = doc?.getElementById("root");
-        if (root?.childElementCount > 0) {
-          wrap?.querySelector(".via-loading")?.remove();
-          frame.hidden = false;
-          return;
-        }
-        if (Date.now() - started > 20000) {
-          block.innerHTML = `
-            <div class="via-setup state-block">
-              <span class="material-symbols-outlined state-icon">keyboard</span>
-              <p class="state-title">Editor did not start</p>
-              <p class="state-desc">Run <code>npm run rebuild:via</code>, restart the app, then open Keymap again.</p>
-            </div>`;
-          return;
-        }
-        requestAnimationFrame(waitForUi);
-      };
-      waitForUi();
-    });
-    frame.addEventListener("error", () => {
+    const showViaError = (title, desc) => {
+      if (loadGen !== this._viaLoadGen) return;
       block.innerHTML = `
         <div class="via-setup state-block">
           <span class="material-symbols-outlined state-icon">keyboard</span>
-          <p class="state-title">Could not load VIA</p>
-          <p class="state-desc">Run <code>npm run rebuild:via</code> or <code>npm run setup:via</code>, then restart.</p>
+          <p class="state-title">${title}</p>
+          <p class="state-desc">${desc}</p>
         </div>`;
+      this._frame = null;
+    };
+
+    frame.addEventListener("load", () => {
+      const started = Date.now();
+      const fallbackWait = () => {
+        if (loadGen !== this._viaLoadGen) return;
+        const wrap = block.querySelector(".via-frame-wrap");
+        if (wrap?.classList.contains("is-ready")) return;
+
+        const doc = frame.contentDocument;
+        const root = doc?.getElementById("root");
+        if (root?.childElementCount > 0) {
+          this._markViaReady();
+          return;
+        }
+        if (Date.now() - started > 45000) {
+          showViaError(
+            "Editor did not start",
+            "Close the app, run <code>npm run rebuild:via</code> and <code>npm run build:portable</code>, then try again.",
+          );
+          return;
+        }
+        requestAnimationFrame(fallbackWait);
+      };
+      fallbackWait();
     });
 
-    this._authorizeViaDevice().finally(() => {
-      frame.src = "./via/index.html#/";
-      block.querySelector(".via-frame-wrap")?.appendChild(frame);
+    block.querySelector(".via-frame-wrap")?.appendChild(frame);
+    frame.src = new URL("via/index.html#/", window.location.href).href;
+  },
+
+  _bindViaReady() {
+    if (this._onViaReady) return;
+    this._onViaReady = (e) => {
+      if (e.data?.type !== "gmk87-via-ready") return;
+      this._markViaReady();
+    };
+    window.addEventListener("message", this._onViaReady);
+  },
+
+  _markViaReady() {
+    const block = document.getElementById("via-host");
+    const wrap = block?.querySelector(".via-frame-wrap");
+    if (!wrap || wrap.classList.contains("is-ready")) return;
+
+    wrap.classList.add("is-ready");
+    void this._expandWindow().then(() => {
+      this._finishViaLayout(wrap);
     });
+  },
+
+  _finishViaLayout(wrap) {
+    if (!wrap) return;
+    wrap.classList.add("is-expanded");
+    wrap.querySelector(".via-loading")?.remove();
+    this._frame?.contentWindow?.focus?.();
+    this._frame?.contentWindow?.postMessage(
+      { type: "gmk87-host-layout-ready" },
+      "*",
+    );
   },
 
   _bindViaToasts() {
@@ -96,31 +133,6 @@ const ViaView = {
       else if (e.data.level === "success") Toast.success(e.data.message);
     };
     window.addEventListener("message", this._onViaToast);
-  },
-
-  async _authorizeViaDevice() {
-    if (!navigator.hid) return;
-    const viaFilter = (device) =>
-      device.collections?.some(
-        (c) => c.usagePage === 0xff60 && c.usage === 0x61,
-      );
-    const gmk87Filter = (device) =>
-      device.vendorId === 0x320f &&
-      (device.productId === 0x5055 || device.productId === 0x5088);
-
-    try {
-      const known = await navigator.hid.getDevices();
-      if (known.some((d) => viaFilter(d) && gmk87Filter(d))) return;
-
-      await navigator.hid.requestDevice({
-        filters: [
-          { vendorId: 0x320f, productId: 0x5055, usagePage: 0xff60, usage: 0x61 },
-          { vendorId: 0x320f, productId: 0x5088, usagePage: 0xff60, usage: 0x61 },
-        ],
-      });
-    } catch {
-      // User dismissed the picker — VIA can still prompt inside the iframe.
-    }
   },
 
   _bindRecordingBridge() {
@@ -183,6 +195,7 @@ const ViaView = {
   },
 
   destroy() {
+    this._viaLoadGen += 1;
     this._unbindRecordingBridge();
     document.getElementById("workspace")?.classList.remove("workspace--via");
     document.getElementById("panel-controls")?.removeAttribute("hidden");
@@ -462,70 +475,33 @@ const ViaView = {
     }
   },
 
-  _lockContentLayout(width, height) {
-    const root = document.documentElement;
-    root.style.setProperty("--resize-lock-w", `${Math.round(width)}px`);
-    root.style.setProperty("--resize-lock-h", `${Math.round(height)}px`);
-  },
+  async _animateWindowSizeOnly(width, height) {
+    const ctx = this._getTauriWindow();
+    if (!ctx) return;
 
-  _unlockContentLayout() {
-    const root = document.documentElement;
-    root.style.removeProperty("--resize-lock-w");
-    root.style.removeProperty("--resize-lock-h");
-  },
+    const { win } = ctx;
+    const gen = ++this._resizeGen;
 
-  async _runCenterSizeAnimation(
-    startW,
-    startH,
-    endW,
-    endH,
-    startCenterX,
-    startCenterY,
-    endCenterX,
-    endCenterY,
-    chrome,
-    gen,
-  ) {
-    const sizeClose =
-      Math.abs(startW - endW) < 2 &&
-      Math.abs(startH - endH) < 2;
-    const centerClose =
-      Math.abs(startCenterX - endCenterX) < 2 &&
-      Math.abs(startCenterY - endCenterY) < 2;
+    const scale = await win.scaleFactor();
+    const inner = await win.innerSize();
+    const startW = inner.width / scale;
+    const startH = inner.height / scale;
 
-    if (sizeClose && centerClose) {
-      await this._applyCenterSize(endW, endH, endCenterX, endCenterY, chrome);
+    if (
+      Math.abs(startW - width) < 2 &&
+      Math.abs(startH - height) < 2
+    ) {
       return;
     }
 
-    let fallback = false;
-    await this._runTimedAnimation(gen, (eased) => {
-      const nextW = Math.round(startW + (endW - startW) * eased);
-      const nextH = Math.round(startH + (endH - startH) * eased);
-      const nextCenterX = Math.round(
-        startCenterX + (endCenterX - startCenterX) * eased,
-      );
-      const nextCenterY = Math.round(
-        startCenterY + (endCenterY - startCenterY) * eased,
-      );
+    document.body.classList.add("is-window-resizing");
 
-      return {
-        key: `${nextW},${nextH},${nextCenterX},${nextCenterY}`,
-        apply: async () => {
-          const moved = await this._applyCenterSize(
-            nextW,
-            nextH,
-            nextCenterX,
-            nextCenterY,
-            chrome,
-          );
-          if (!moved) fallback = true;
-        },
-      };
-    });
-
-    if (fallback) {
-      await this._runSizeAnimation(startW, startH, endW, endH, gen);
+    try {
+      await this._runSizeAnimation(startW, startH, width, height, gen);
+    } finally {
+      if (gen === this._resizeGen) {
+        document.body.classList.remove("is-window-resizing");
+      }
     }
   },
 
@@ -549,86 +525,98 @@ const ViaView = {
     });
   },
 
-  async _animateWindowSizeOnly(width, height) {
-    const ctx = this._getTauriWindow();
-    if (!ctx) return;
+  async _runCenterSizeAnimation(
+    startW,
+    startH,
+    endW,
+    endH,
+    startCenterX,
+    startCenterY,
+    endCenterX,
+    endCenterY,
+    chrome,
+    gen,
+  ) {
+    await this._runTimedAnimation(gen, (eased) => {
+      const nextW = Math.round(startW + (endW - startW) * eased);
+      const nextH = Math.round(startH + (endH - startH) * eased);
+      const nextCenterX = startCenterX + (endCenterX - startCenterX) * eased;
+      const nextCenterY = startCenterY + (endCenterY - startCenterY) * eased;
 
-    const { win } = ctx;
-    const gen = ++this._resizeGen;
-
-    const scale = await win.scaleFactor();
-    const inner = await win.innerSize();
-    const startW = inner.width / scale;
-    const startH = inner.height / scale;
-
-    document.body.classList.add("is-window-resizing");
-    this._lockContentLayout(startW, startH);
-
-    try {
-      await this._runSizeAnimation(startW, startH, width, height, gen);
-    } finally {
-      if (gen === this._resizeGen) {
-        this._unlockContentLayout();
-        document.body.classList.remove("is-window-resizing");
-      }
-    }
+      return {
+        key: `${nextW},${nextH},${nextCenterX.toFixed(1)},${nextCenterY.toFixed(1)}`,
+        apply: () =>
+          this._applyCenterSize(nextW, nextH, nextCenterX, nextCenterY, chrome),
+      };
+    });
   },
 
   async _animateWindowBounds(target) {
-    const start = await this._readBounds();
+    const endW = target.width;
+    const endH = target.height;
     const endCenterX = target.centerX ?? target.center_x;
     const endCenterY = target.centerY ?? target.center_y;
 
-    if (!start || endCenterX == null || endCenterY == null) {
-      await this._animateWindowSizeOnly(target.width, target.height);
-      const ctx = this._getTauriWindow();
-      if (ctx?.win.center) await ctx.win.center().catch(() => {});
+    const start = await this._readBounds();
+    if (!start) {
+      document.body.classList.add("is-window-resizing");
+      try {
+        if (endCenterX != null && endCenterY != null) {
+          await this._applyCenterSize(endW, endH, endCenterX, endCenterY, {
+            chrome_w: 0,
+            chrome_h: 39,
+            dw: 0,
+            dh: 39,
+          });
+        } else {
+          await this._applyInnerSize(endW, endH);
+          const ctx = this._getTauriWindow();
+          if (ctx?.win.center) await ctx.win.center().catch(() => {});
+        }
+      } finally {
+        document.body.classList.remove("is-window-resizing");
+      }
       return;
     }
 
-    const endW = target.width;
-    const endH = target.height;
-    const startW = start.width;
-    const startH = start.height;
-    const startCenterX = start.center_x;
-    const startCenterY = start.center_y;
-    const chrome = start;
+    const needSize =
+      Math.abs(start.width - endW) >= 2 || Math.abs(start.height - endH) >= 2;
+    const needCenter =
+      endCenterX != null &&
+      endCenterY != null &&
+      (Math.abs(start.center_x - endCenterX) >= 2 ||
+        Math.abs(start.center_y - endCenterY) >= 2);
 
-    const sizeClose =
-      Math.abs(startW - endW) < 2 &&
-      Math.abs(startH - endH) < 2;
-    const centerClose =
-      Math.abs(startCenterX - endCenterX) < 2 &&
-      Math.abs(startCenterY - endCenterY) < 2;
-
-    if (sizeClose && centerClose) {
-      await this._applyCenterSize(endW, endH, endCenterX, endCenterY, chrome);
-      return;
-    }
+    if (!needSize && !needCenter) return;
 
     const gen = ++this._resizeGen;
     document.body.classList.add("is-window-resizing");
-    this._lockContentLayout(startW, startH);
 
     try {
-      await this._runCenterSizeAnimation(
-        startW,
-        startH,
-        endW,
-        endH,
-        startCenterX,
-        startCenterY,
-        endCenterX,
-        endCenterY,
-        chrome,
-        gen,
-      );
-      if (gen !== this._resizeGen) return;
-
-      await this._applyCenterSize(endW, endH, endCenterX, endCenterY, chrome);
+      if (endCenterX != null && endCenterY != null) {
+        await this._runCenterSizeAnimation(
+          start.width,
+          start.height,
+          endW,
+          endH,
+          start.center_x,
+          start.center_y,
+          endCenterX,
+          endCenterY,
+          start,
+          gen,
+        );
+      } else if (needSize) {
+        await this._runSizeAnimation(
+          start.width,
+          start.height,
+          endW,
+          endH,
+          gen,
+        );
+      }
     } finally {
       if (gen === this._resizeGen) {
-        this._unlockContentLayout();
         document.body.classList.remove("is-window-resizing");
       }
     }

@@ -229,27 +229,46 @@ body.is-window-resizing #workspace * {
   transition: none !important;
 }
 
-body.is-window-resizing #app {
-  width: var(--resize-lock-w) !important;
-  height: var(--resize-lock-h) !important;
-  max-width: var(--resize-lock-w) !important;
-  max-height: var(--resize-lock-h) !important;
-  overflow: hidden;
-}
-
 body.is-window-resizing #app,
 body.is-window-resizing #workspace {
   pointer-events: none;
 }
 
-body.is-window-resizing #workspace {
-  justify-content: flex-start !important;
-  align-items: stretch !important;
+body.is-window-resizing::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: var(--bg);
+  pointer-events: none;
 }
 
-body.is-window-resizing .via-frame,
-body.is-window-resizing .via-loading {
-  visibility: hidden;
+.via-frame-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.via-frame-wrap .via-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+}
+
+.via-frame-wrap.is-ready .via-loading {
+  display: none;
 }
 
 #workspace.workspace--via {
@@ -269,27 +288,12 @@ body.is-window-resizing .via-loading {
   flex-direction: column;
 }
 
-.via-frame-wrap {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--surface);
-}
-
 .via-frame {
   flex: 1;
   width: 100%;
   min-height: 0;
   border: 0;
   background: var(--bg);
-}
-
-.via-loading {
-  margin: auto;
 }
 
 .via-setup {
